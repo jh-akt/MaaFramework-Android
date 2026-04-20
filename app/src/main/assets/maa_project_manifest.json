@@ -1,0 +1,21 @@
+{
+  "project_id": "maa-bbb",
+  "display_name": "Maa_bbb Android Sample",
+  "default_resource_id": "官服",
+  "default_task_id": "崩坏三 启动！",
+  "supported_controllers": [
+    "adb",
+    "安卓端"
+  ],
+  "attach_resource_paths": [],
+  "resource_package_names": {
+    "官服": "com.miHoYo.enterprise.NGHSoD",
+    "B服": "com.miHoYo.bh3.bilibili",
+    "OPPO渠道服": "com.miHoYo.bh3.nearme.gamecenter",
+    "华为渠道服": "com.miHoYo.bh3.huawei",
+    "应用宝渠道服": "com.tencent.tmgp.bh3",
+    "VIVO服": "com.miHoYo.bh3.vivo",
+    "九游服": "com.miHoYo.bh3.uc",
+    "小米服": "com.miHoYo.bh3.mi"
+  }
+}

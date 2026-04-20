@@ -1,0 +1,16 @@
+.gradle/
+.kotlin/
+/build/
+/app/build/
+/framework/build/
+/app/.cxx/
+/framework/.cxx/
+local.properties
+key.properties
+*.jks
+*.keystore
+runtime/agent/go-service
+runtime/agent/maa-go-runner
+runtime/maafw/
+runtime/runtime-manifest.json
+tmp/
