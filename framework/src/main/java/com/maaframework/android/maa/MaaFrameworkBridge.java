@@ -717,6 +717,14 @@ public final class MaaFrameworkBridge {
         int[] resolution = displayId != DefaultDisplayConfig.DISPLAY_NONE
                 ? new int[] { DefaultDisplayConfig.WIDTH, DefaultDisplayConfig.HEIGHT }
                 : queryResolution(context);
+        int effectiveDisplayId = displayId == DefaultDisplayConfig.DISPLAY_NONE ? 0 : displayId;
+        boolean usingVirtualDisplay = displayId != DefaultDisplayConfig.DISPLAY_NONE;
+        Log.i(
+                TAG,
+                "buildControllerConfig displayId=" + effectiveDisplayId
+                        + " virtualDisplay=" + usingVirtualDisplay
+                        + " resolution=" + resolution[0] + "x" + resolution[1]
+        );
         try {
             JSONObject root = new JSONObject();
             root.put("library_path", new File(context.getApplicationInfo().nativeLibraryDir, "libbridge.so").getAbsolutePath());
@@ -730,8 +738,8 @@ public final class MaaFrameworkBridge {
             screen.put("width", resolution[0]);
             screen.put("height", resolution[1]);
             root.put("screen_resolution", screen);
-            root.put("display_id", displayId == DefaultDisplayConfig.DISPLAY_NONE ? 0 : displayId);
-            root.put("force_stop", displayId != DefaultDisplayConfig.DISPLAY_NONE);
+            root.put("display_id", effectiveDisplayId);
+            root.put("force_stop", usingVirtualDisplay);
             return root.toString();
         } catch (Exception e) {
             throw new IllegalStateException("failed to build controller config", e);

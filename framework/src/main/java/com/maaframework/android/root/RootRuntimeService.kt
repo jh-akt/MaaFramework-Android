@@ -143,18 +143,31 @@ class RootRuntimeService(
             return false
         }
 
+        val resource = resolveResourceDescriptor(request.resourceName)
+        if (resource == null) {
+            failRun(taskId = request.taskId ?: taskIds.firstOrNull(), message = "Resource not found for ${request.resourceName}")
+            return false
+        }
+
         stopRequested = false
         currentFuture = executor.submit {
             val runLabel = request.taskId ?: request.presetId ?: "sequence"
             val priorityState = elevateTaskExecutionThreadPriority(runLabel)
             try {
                 log("Run started: ${request.taskId ?: request.presetId ?: taskIds.joinToString(",")}")
+                if (!prepareVirtualDisplayForRun(resource)) {
+                    failRun(
+                        taskIds.firstOrNull(),
+                        "Failed to prepare 16:9 virtual display for resource ${resource.id}",
+                    )
+                    return@submit
+                }
                 for (taskId in taskIds) {
                     if (stopRequested) {
                         completeRun(taskId, "Run stopped by user", RunSessionPhase.Completed)
                         return@submit
                     }
-                    if (!runSingleTask(taskId, request.optionOverridesByTask[taskId], request.resourceName, request.logLevel)) {
+                    if (!runSingleTask(taskId, request.optionOverridesByTask[taskId], resource, request.logLevel)) {
                         return@submit
                     }
                 }
@@ -180,25 +193,14 @@ class RootRuntimeService(
     }
 
     override fun startWindowedGame(resourceId: String?): Boolean {
-        val packageName = projectManifest.packageNameFor(resourceId)
-        if (packageName.isNullOrBlank()) {
-            log("No package configured for resource=$resourceId")
-            return false
-        }
-        val displayId = VirtualDisplayManager.start(context)
-        if (displayId == DefaultDisplayConfig.DISPLAY_NONE) {
-            log("Failed to start virtual display for $packageName")
-            return false
-        }
-        val launched = ActivityUtils.startApp(
-            context = context,
-            packageName = packageName,
-            displayId = displayId,
+        val launched = launchResourceOnVirtualDisplay(
+            resourceId = resourceId,
+            requirePackage = true,
             forceStop = true,
             excludeFromRecents = false,
         )
         if (launched) {
-            log("Windowed game launched: package=$packageName displayId=$displayId")
+            log("Windowed game launched for resource=$resourceId displayId=${VirtualDisplayManager.getDisplayId()}")
         }
         return launched
     }
@@ -302,7 +304,7 @@ class RootRuntimeService(
     private fun runSingleTask(
         taskId: String,
         optionOverrideJson: String?,
-        resourceId: String,
+        resource: ResourceDescriptor,
         logLevel: String,
     ): Boolean {
         updateSnapshot {
@@ -317,12 +319,6 @@ class RootRuntimeService(
         val entry = resolveTaskEntry(taskId)
         if (entry.isNullOrBlank()) {
             failRun(taskId, "Task entry not found for $taskId")
-            return false
-        }
-
-        val resource = resolveResourceDescriptor(resourceId)
-        if (resource == null) {
-            failRun(taskId, "Resource not found for $resourceId")
             return false
         }
 
@@ -365,6 +361,61 @@ class RootRuntimeService(
         return catalog.resources.firstOrNull { it.id == resourceId }
             ?: catalog.resources.firstOrNull { it.label == resourceId }
             ?: catalog.resources.firstOrNull()
+    }
+
+    private fun prepareVirtualDisplayForRun(resource: ResourceDescriptor): Boolean {
+        val ready = launchResourceOnVirtualDisplay(
+            resourceId = resource.id,
+            requirePackage = false,
+            forceStop = true,
+            excludeFromRecents = true,
+        )
+        if (ready) {
+            log(
+                "Run display prepared: resource=${resource.id} displayId=${VirtualDisplayManager.getDisplayId()} " +
+                    "size=${DefaultDisplayConfig.WIDTH}x${DefaultDisplayConfig.HEIGHT}",
+            )
+        }
+        return ready
+    }
+
+    private fun launchResourceOnVirtualDisplay(
+        resourceId: String?,
+        requirePackage: Boolean,
+        forceStop: Boolean,
+        excludeFromRecents: Boolean,
+    ): Boolean {
+        val displayId = VirtualDisplayManager.start(context)
+        if (displayId == DefaultDisplayConfig.DISPLAY_NONE) {
+            log("Failed to start virtual display for resource=$resourceId")
+            return false
+        }
+
+        log(
+            "Virtual display ready: resource=$resourceId displayId=$displayId " +
+                "size=${DefaultDisplayConfig.WIDTH}x${DefaultDisplayConfig.HEIGHT}",
+        )
+
+        val packageName = projectManifest.packageNameFor(resourceId)
+        if (packageName.isNullOrBlank()) {
+            log("No package configured for resource=$resourceId")
+            return !requirePackage
+        }
+
+        val launched = ActivityUtils.startApp(
+            context = context,
+            packageName = packageName,
+            displayId = displayId,
+            forceStop = forceStop,
+            excludeFromRecents = excludeFromRecents,
+        )
+        if (!launched) {
+            log("Failed to launch package=$packageName on virtual display $displayId for resource=$resourceId")
+            return false
+        }
+
+        log("Virtual display app launched: package=$packageName displayId=$displayId resource=$resourceId")
+        return true
     }
 
     private fun loadCatalogSnapshot() = if ((runtimeRoot ?: runtimeRootDirectory()).resolve("interface.json").exists()) {

@@ -20,6 +20,7 @@ object ActivityUtils {
         val intent = pm.getLaunchIntentForPackage(packageName)
             ?: pm.getLeanbackLaunchIntentForPackage(packageName)
             ?: return false
+        val componentName = intent.component?.flattenToShortString()
 
         var flags = Intent.FLAG_ACTIVITY_NEW_TASK
         if (excludeFromRecents) {
@@ -30,7 +31,12 @@ object ActivityUtils {
         }
         intent.addFlags(flags)
 
-        if (forceStop) {
+        if (displayId == 0 && componentName != null) {
+            val startedViaShell = startFullscreenViaShell(componentName, forceStop)
+            if (startedViaShell) {
+                return true
+            }
+        } else if (forceStop) {
             ServiceManager.getActivityManager().forceStopPackage(packageName)
         }
 
@@ -44,6 +50,26 @@ object ActivityUtils {
             ret >= 0
         } catch (e: Exception) {
             Log.e(TAG, "startApp failed package=$packageName displayId=$displayId", e)
+            false
+        }
+    }
+
+    private fun startFullscreenViaShell(componentName: String, forceStop: Boolean): Boolean {
+        return try {
+            val command = mutableListOf("/system/bin/am", "start", "-W")
+            if (forceStop) {
+                command += "-S"
+            }
+            command += listOf("--display", "0", "--windowingMode", "1", "-n", componentName)
+            val process = ProcessBuilder(command)
+                .redirectErrorStream(true)
+                .start()
+            val output = process.inputStream.bufferedReader().use { it.readText().trim() }
+            val code = process.waitFor()
+            Log.i(TAG, "startApp shell component=$componentName code=$code output=$output")
+            code == 0 && !output.contains("Exception", ignoreCase = true)
+        } catch (e: Exception) {
+            Log.w(TAG, "startApp shell fallback failed for component=$componentName", e)
             false
         }
     }

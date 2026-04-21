@@ -20,49 +20,97 @@ static jmethodID g_start_app_method = nullptr;
 static jmethodID g_stop_app_method = nullptr;
 static jmethodID g_input_text_method = nullptr;
 
-static constexpr char kDriverClass[] = "com/maaframework/android/bridge/DriverClass";
-static constexpr char kNativeBridgeClass[] = "com/maaframework/android/bridge/NativeBridgeLib";
+bool CheckJNIException(JNIEnv *env, const char *context);
 
-static jstring ping(JNIEnv *env, jclass clazz) {
+static bool BootstrapDriverBindings(JNIEnv *env, jclass driverClass) {
+    if (!env || !driverClass) {
+        return false;
+    }
+    if (g_driver_clz) {
+        env->DeleteGlobalRef(g_driver_clz);
+        g_driver_clz = nullptr;
+    }
+    g_capture_frame_method = nullptr;
+    g_touch_down_method = nullptr;
+    g_touch_move_method = nullptr;
+    g_touch_up_method = nullptr;
+    g_key_down_method = nullptr;
+    g_key_up_method = nullptr;
+    g_start_app_method = nullptr;
+    g_stop_app_method = nullptr;
+    g_input_text_method = nullptr;
+
+    g_driver_clz = static_cast<jclass>(env->NewGlobalRef(driverClass));
+    if (!g_driver_clz) {
+        return false;
+    }
+
+    g_capture_frame_method = env->GetStaticMethodID(g_driver_clz, "captureFrame", "()Landroid/graphics/Bitmap;");
+    g_touch_down_method = env->GetStaticMethodID(g_driver_clz, "touchDown", "(III)Z");
+    g_touch_move_method = env->GetStaticMethodID(g_driver_clz, "touchMove", "(III)Z");
+    g_touch_up_method = env->GetStaticMethodID(g_driver_clz, "touchUp", "(III)Z");
+    g_key_down_method = env->GetStaticMethodID(g_driver_clz, "keyDown", "(II)Z");
+    g_key_up_method = env->GetStaticMethodID(g_driver_clz, "keyUp", "(II)Z");
+    g_start_app_method = env->GetStaticMethodID(g_driver_clz, "startApp", "(Ljava/lang/String;IZ)Z");
+    g_stop_app_method = env->GetStaticMethodID(g_driver_clz, "stopApp", "(Ljava/lang/String;I)Z");
+    g_input_text_method = env->GetStaticMethodID(g_driver_clz, "inputText", "(Ljava/lang/String;)Z");
+
+    if (CheckJNIException(env, "GetStaticMethodID(DriverClass)") ||
+        !g_capture_frame_method || !g_touch_down_method || !g_touch_move_method ||
+        !g_touch_up_method || !g_key_down_method || !g_key_up_method ||
+        !g_start_app_method || !g_stop_app_method || !g_input_text_method) {
+        env->DeleteGlobalRef(g_driver_clz);
+        g_driver_clz = nullptr;
+        return false;
+    }
+    return true;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_maaframework_android_bridge_NativeBridgeLib_bootstrap(JNIEnv *env, jclass clazz, jclass driverClass) {
+    (void) clazz;
+    if (!BootstrapDriverBindings(env, driverClass)) {
+        env->ThrowNew(env->FindClass("java/lang/IllegalStateException"), "Failed to bootstrap DriverClass JNI bindings");
+    }
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_maaframework_android_bridge_NativeBridgeLib_ping(JNIEnv *env, jclass clazz) {
     (void) clazz;
     return env->NewStringUTF("MaaFrameworkBridge");
 }
 
-static jobject nativeSetupNativeCapturer(JNIEnv *env, jclass clazz, jint width, jint height) {
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_maaframework_android_bridge_NativeBridgeLib_setupNativeCapturer(JNIEnv *env, jclass clazz, jint width, jint height) {
     (void) clazz;
     return SetupNativeCapturer(env, width, height);
 }
 
-static void nativeReleaseNativeCapturer(JNIEnv *env, jclass clazz) {
+extern "C" JNIEXPORT void JNICALL
+Java_com_maaframework_android_bridge_NativeBridgeLib_releaseNativeCapturer(JNIEnv *env, jclass clazz) {
     (void) env;
     (void) clazz;
     ReleaseNativeCapturer();
 }
 
-static void nativeSetPreviewSurface(JNIEnv *env, jclass clazz, jobject jSurface) {
+extern "C" JNIEXPORT void JNICALL
+Java_com_maaframework_android_bridge_NativeBridgeLib_setPreviewSurface(JNIEnv *env, jclass clazz, jobject jSurface) {
     (void) clazz;
     SetPreviewSurface(env, jSurface);
 }
 
-static jlong nativeGetFrameCount(JNIEnv *env, jclass clazz) {
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_maaframework_android_bridge_NativeBridgeLib_getFrameCount(JNIEnv *env, jclass clazz) {
     (void) env;
     (void) clazz;
     return static_cast<jlong>(GetFrameCount());
 }
 
-static jobject nativeCapturePreviewFrame(JNIEnv *env, jclass clazz) {
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_maaframework_android_bridge_NativeBridgeLib_capturePreviewFrame(JNIEnv *env, jclass clazz) {
     (void) clazz;
     return CreateFrameBufferBitmap(env);
 }
-
-static JNINativeMethod gBridgeMethods[] = {
-        {"ping", "()Ljava/lang/String;", reinterpret_cast<void *>(ping)},
-        {"setupNativeCapturer", "(II)Landroid/view/Surface;", reinterpret_cast<void *>(nativeSetupNativeCapturer)},
-        {"releaseNativeCapturer", "()V", reinterpret_cast<void *>(nativeReleaseNativeCapturer)},
-        {"setPreviewSurface", "(Ljava/lang/Object;)V", reinterpret_cast<void *>(nativeSetPreviewSurface)},
-        {"getFrameCount", "()J", reinterpret_cast<void *>(nativeGetFrameCount)},
-        {"capturePreviewFrame", "()Landroid/graphics/Bitmap;", reinterpret_cast<void *>(nativeCapturePreviewFrame)},
-};
 
 struct FrameBufferHolder {
     uint8_t *data = nullptr;
@@ -330,54 +378,6 @@ BRIDGE_API int DispatchInputMessage(MethodParam param) {
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     (void) reserved;
     g_vm = vm;
-
-    JNIEnv *env = nullptr;
-    if (vm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION_1_6) != JNI_OK || !env) {
-        return JNI_ERR;
-    }
-
-    jclass nativeLibClass = env->FindClass(kNativeBridgeClass);
-    if (!nativeLibClass) {
-        CheckJNIException(env, "FindClass(NativeBridgeLib)");
-        return JNI_ERR;
-    }
-    if (env->RegisterNatives(
-            nativeLibClass, gBridgeMethods,
-            static_cast<jint>(sizeof(gBridgeMethods) / sizeof(gBridgeMethods[0]))) < 0) {
-        CheckJNIException(env, "RegisterNatives(NativeBridgeLib)");
-        env->DeleteLocalRef(nativeLibClass);
-        return JNI_ERR;
-    }
-    env->DeleteLocalRef(nativeLibClass);
-
-    jclass driverClass = env->FindClass(kDriverClass);
-    if (!driverClass || CheckJNIException(env, "FindClass(DriverClass)")) {
-        return JNI_ERR;
-    }
-
-    g_driver_clz = static_cast<jclass>(env->NewGlobalRef(driverClass));
-    env->DeleteLocalRef(driverClass);
-    if (!g_driver_clz) {
-        return JNI_ERR;
-    }
-
-    g_capture_frame_method = env->GetStaticMethodID(g_driver_clz, "captureFrame", "()Landroid/graphics/Bitmap;");
-    g_touch_down_method = env->GetStaticMethodID(g_driver_clz, "touchDown", "(III)Z");
-    g_touch_move_method = env->GetStaticMethodID(g_driver_clz, "touchMove", "(III)Z");
-    g_touch_up_method = env->GetStaticMethodID(g_driver_clz, "touchUp", "(III)Z");
-    g_key_down_method = env->GetStaticMethodID(g_driver_clz, "keyDown", "(II)Z");
-    g_key_up_method = env->GetStaticMethodID(g_driver_clz, "keyUp", "(II)Z");
-    g_start_app_method = env->GetStaticMethodID(g_driver_clz, "startApp", "(Ljava/lang/String;IZ)Z");
-    g_stop_app_method = env->GetStaticMethodID(g_driver_clz, "stopApp", "(Ljava/lang/String;I)Z");
-    g_input_text_method = env->GetStaticMethodID(g_driver_clz, "inputText", "(Ljava/lang/String;)Z");
-
-    if (CheckJNIException(env, "GetStaticMethodID(DriverClass)") ||
-        !g_capture_frame_method || !g_touch_down_method || !g_touch_move_method ||
-        !g_touch_up_method || !g_key_down_method || !g_key_up_method ||
-        !g_start_app_method || !g_stop_app_method || !g_input_text_method) {
-        return JNI_ERR;
-    }
-
     return JNI_VERSION_1_6;
 }
 
@@ -387,5 +387,9 @@ JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
     JNIEnv *env = nullptr;
     if (vm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION_1_6) == JNI_OK && env) {
         SetPreviewSurface(env, nullptr);
+        if (g_driver_clz) {
+            env->DeleteGlobalRef(g_driver_clz);
+            g_driver_clz = nullptr;
+        }
     }
 }
