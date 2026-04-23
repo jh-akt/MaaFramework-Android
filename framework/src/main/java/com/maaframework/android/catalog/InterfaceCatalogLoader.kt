@@ -23,7 +23,7 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
 class InterfaceCatalogLoader(
-    private val assets: AssetManager,
+    private val assets: AssetManager? = null,
     private val supportedControllers: Set<String> = setOf("adb"),
 ) {
     private val json = Json {
@@ -327,7 +327,8 @@ class InterfaceCatalogLoader(
     }
 
     private fun readAssetText(path: String): String {
-        return assets.open(path).bufferedReader(Charsets.UTF_8).use { it.readText() }
+        val assetManager = checkNotNull(assets) { "AssetManager is required for load()" }
+        return assetManager.open(path).bufferedReader(Charsets.UTF_8).use { it.readText() }
     }
 
     private fun readAssetTextOrNull(path: String): String? {

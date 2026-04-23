@@ -1,6 +1,6 @@
 # MaaFramework Android Session Summary
 
-Date: 2026-04-21  
+Date: 2026-04-24
 Workspace: `/Users/haojiang/Code/MaaFramework-Android`  
 Reference repos:
 
@@ -45,12 +45,14 @@ Reference repos:
   - `runtime/`
   - `runtime/maafw/*.so`
 - Compose 样例页支持：
-  - 资源选择
-  - 预设选择
-  - 任务选择与执行
-  - 运行状态轮询
-  - 日志展示
-  - root 诊断展示
+- 资源选择
+- 预设选择
+- 任务选择与执行
+- 参考 `MaaEnd-Android` 的 Home / Tasks / Logs 页面结构与主题
+- 虚拟显示预览挂载
+- 运行状态轮询
+- 日志展示
+- root 诊断展示
 
 ## 3. 已验证结果
 
@@ -85,12 +87,15 @@ ANDROID_HOME="$HOME/Library/Android/sdk" \
 
 ### 真机
 
-真机 `382b528f` 的 `adb shell` 中没有 `su`：
+真机 `382b528f` 已切换到 `Sukisu Ultra` 管理 root，并完成了对样例 App 的授权联调。当前已经确认：
 
-- `which su` 无输出
-- `su -c id` 返回 `su: inaccessible or not found`
+- 样例页显示 `Root · Granted`
+- `Connect Root` 后 `Connected · Yes`
+- `Prepare Runtime` 可成功
+- `Run Task` 后可创建虚拟显示并拉起 `com.miHoYo.enterprise.NGHSoD`
+- Runtime 日志中可见 `agent client connected`
 
-因此样例显示 `Root environment not detected` 是正确行为，不是框架误判。
+因此当前真机链路的关键前提已经满足，root/runtime 不再是主阻塞。
 
 ### 模拟器
 
@@ -113,25 +118,30 @@ ANDROID_HOME="$HOME/Library/Android/sdk" \
 
 仅靠：
 
-- 普通 adb 调试真机
+- 没有向 App 授权 `su` 的普通 adb 调试真机
 - 只有 `adb root` 的模拟器
 
 都不够。
 
-## 5. 下次继续时最重要的事
+## 5. 当前剩余主阻塞
 
-如果目标是继续验证真正的 runtime 执行链路，优先准备一台可向 App 授权 root 的设备，然后按这个顺序做：
+`崩坏三 启动！` 任务已经能够真正启动，但还没有完整跑通。当前卡点收敛在“启动并进入游戏”这段：
 
-1. 安装样例 APK
-2. 打开样例首页，确认 root 诊断变为 `Executable su binary found` 或直接 `granted`
-3. 点击 `Connect Root`
-4. 点击 `Prepare Runtime`
-5. 观察 `Runtime Logs`
-6. 再尝试执行 `崩坏三 启动！`
+1. 游戏被成功拉起到虚拟显示
+2. 日志进入 `启动并进入游戏`
+3. `成功进入游戏主菜单` 与 `点击任意位置进入游戏` 识别失败
+4. 随后再次命中 `模拟器包名游戏启动` 并重复 `StartApp`
 
-如果目标是继续框架化，而不是设备联调，优先做：
+结论：
 
-1. 提炼更多公开 API
+- root 权限不是问题
+- runtime 准备不是问题
+- 虚拟显示与拉起游戏不是问题
+- 当前需要继续修的是启动阶段识别/流程控制
+
+如果目标是继续框架化，优先做：
+
+1. 继续同步 `MaaEnd-Android` 中明确属于 framework 的 UI / 输入 / 诊断能力
 2. 增加发布脚本或 Maven 发布配置
 3. 为 `maa_project_manifest.json` 提供模板和校验
 

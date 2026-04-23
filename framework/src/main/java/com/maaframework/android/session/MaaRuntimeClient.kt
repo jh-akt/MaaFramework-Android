@@ -34,11 +34,17 @@ class MaaRuntimeClient internal constructor(
 
     fun startWindowedGame(resourceId: String?): Boolean = service.startWindowedGame(resourceId)
 
-    fun touchDown(x: Int, y: Int): Boolean = service.touchDown(x, y)
+    fun touchDown(x: Int, y: Int): Boolean = touchDown(contactId = 0, x = x, y = y)
 
-    fun touchMove(x: Int, y: Int): Boolean = service.touchMove(x, y)
+    fun touchDown(contactId: Int, x: Int, y: Int): Boolean = service.touchDown(contactId, x, y)
 
-    fun touchUp(x: Int, y: Int): Boolean = service.touchUp(x, y)
+    fun touchMove(x: Int, y: Int): Boolean = touchMove(contactId = 0, x = x, y = y)
+
+    fun touchMove(contactId: Int, x: Int, y: Int): Boolean = service.touchMove(contactId, x, y)
+
+    fun touchUp(x: Int, y: Int): Boolean = touchUp(contactId = 0, x = x, y = y)
+
+    fun touchUp(contactId: Int, x: Int, y: Int): Boolean = service.touchUp(contactId, x, y)
 
     fun getWindowedDisplayId(): Int = service.getWindowedDisplayId()
 

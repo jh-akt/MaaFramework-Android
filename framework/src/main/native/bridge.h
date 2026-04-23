@@ -49,7 +49,10 @@ struct InputArgs {
 };
 
 struct TouchArgs {
-    Position p;
+    union {
+        Position p;
+        Position points[1];
+    };
 };
 
 struct KeyArgs {

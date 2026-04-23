@@ -1,6 +1,6 @@
 # MaaFramework Android
 
-`MaaFramework Android` 是一个把 MAA 项目封装成 Android Root 宿主应用的通用框架仓库。它从 `MaaEnd-Android` 中抽离出可复用的运行时准备、Root Runtime 启动、任务目录解析、虚拟显示预览与日志诊断能力，并附带一个基于 `Maa_bbb` 资产的样例应用。
+`MaaFramework Android` 是一个把 MAA 项目封装成 Android Root 宿主应用的通用框架仓库。它从 `MaaEnd-Android` 中抽离出可复用的运行时准备、Root Runtime 启动、任务目录解析、虚拟显示预览与日志诊断能力，并附带一个基于 `Maa_bbb` 资产的样例应用。样例页面也同步参考了 `MaaEnd-Android` 的主题、信息架构和预览/日志分屏方式，作为框架层 UI 的默认示范。
 
 ## 当前内容
 
@@ -11,6 +11,7 @@
   - 样例宿主应用
   - 默认从同级 `../Maa_bbb/assets` 同步项目资产
   - 用来演示如何把任意 MAA 项目接入到 Android
+  - 页面结构参考 `MaaEnd-Android`，保留 Home / Tasks / Logs 的框架层 UI 组织方式
 - `runtime/`
   - Android 运行时二进制暂存目录
   - 打包时会被样例应用复制进 APK 资产或 JNI 目录
@@ -101,6 +102,7 @@ client.startRun(
 - `readLogChunk(...)`
 - `exportDiagnostics()`
 - `startWindowedGame(resourceId)`
+- `setMonitorSurface(surface)`
 - `setDisplayPower(on)`
 
 这样接入方不需要直接操作底层 AIDL。
@@ -132,10 +134,15 @@ adb shell settings put system screen_off_timeout 2147483647
 
 ## 已验证状态
 
-- `framework` 库模块与 `app` 样例模块可成功编译
+- `framework` 库模块与 `app` 样例模块曾在 `JDK 21` 环境下成功编译
 - `Maa_bbb` 的资源、任务与资源渠道列表可在样例中正确加载
 - 样例已安装到真机和模拟器进行验证
-- 当前调试环境都不满足“应用可获得 root”前提，因此尚未完成真实 root runtime 执行闭环
+- 真机 `382b528f` 在 `Sukisu Ultra` 授权下已验证：
+  - App 可获得 `su`
+  - Root Runtime 可连接
+  - `Prepare Runtime` 可成功
+  - 虚拟显示可创建，目标游戏可被拉起
+- 当前剩余主阻塞不再是 root/runtime，而是 `崩坏三 启动！` 在“启动并进入游戏”阶段会反复命中 `StartApp`，尚未进入主菜单识别闭环
 
 ## 仓库结构
 

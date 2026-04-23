@@ -60,17 +60,32 @@ object DriverClass {
 
     @JvmStatic
     fun touchDown(x: Int, y: Int, displayId: Int): Boolean {
-        return InputControlUtils.down(x, y, displayId)
+        return touchDown(0, x, y, displayId)
+    }
+
+    @JvmStatic
+    fun touchDown(contactId: Int, x: Int, y: Int, displayId: Int): Boolean {
+        return InputControlUtils.down(contactId, x, y, displayId)
     }
 
     @JvmStatic
     fun touchMove(x: Int, y: Int, displayId: Int): Boolean {
-        return InputControlUtils.move(x, y, displayId)
+        return touchMove(0, x, y, displayId)
+    }
+
+    @JvmStatic
+    fun touchMove(contactId: Int, x: Int, y: Int, displayId: Int): Boolean {
+        return InputControlUtils.move(contactId, x, y, displayId)
     }
 
     @JvmStatic
     fun touchUp(x: Int, y: Int, displayId: Int): Boolean {
-        return InputControlUtils.up(x, y, displayId)
+        return touchUp(0, x, y, displayId)
+    }
+
+    @JvmStatic
+    fun touchUp(contactId: Int, x: Int, y: Int, displayId: Int): Boolean {
+        return InputControlUtils.up(contactId, x, y, displayId)
     }
 
     @JvmStatic

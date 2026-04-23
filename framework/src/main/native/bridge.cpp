@@ -207,6 +207,10 @@ static const char *MethodName(int method) {
     }
 }
 
+static const Position &FirstTouchPoint(const TouchArgs &touch) {
+    return touch.points[0];
+}
+
 BRIDGE_API FrameInfo GetLockedPixels() {
     FrameInfo result {};
     LOGI("GetLockedPixels called");
@@ -308,15 +312,17 @@ BRIDGE_API int DispatchInputMessage(MethodParam param) {
     switch (param.method) {
         case TOUCH_DOWN:
         case TOUCH_MOVE:
-        case TOUCH_UP:
+        case TOUCH_UP: {
+            const Position &touchPoint = FirstTouchPoint(param.args.touch);
             LOGI(
                     "DispatchInputMessage method=%s display=%d x=%d y=%d",
                     MethodName(param.method),
                     param.display_id,
-                    param.args.touch.p.x,
-                    param.args.touch.p.y
+                    touchPoint.x,
+                    touchPoint.y
             );
             break;
+        }
         case KEY_DOWN:
         case KEY_UP:
             LOGI(
@@ -338,15 +344,21 @@ BRIDGE_API int DispatchInputMessage(MethodParam param) {
 
     int ret = -1;
     switch (param.method) {
-        case TOUCH_DOWN:
-            ret = CallBool(env, g_touch_down_method, param.args.touch.p.x, param.args.touch.p.y, param.display_id);
+        case TOUCH_DOWN: {
+            const Position &touchPoint = FirstTouchPoint(param.args.touch);
+            ret = CallBool(env, g_touch_down_method, touchPoint.x, touchPoint.y, param.display_id);
             break;
-        case TOUCH_MOVE:
-            ret = CallBool(env, g_touch_move_method, param.args.touch.p.x, param.args.touch.p.y, param.display_id);
+        }
+        case TOUCH_MOVE: {
+            const Position &touchPoint = FirstTouchPoint(param.args.touch);
+            ret = CallBool(env, g_touch_move_method, touchPoint.x, touchPoint.y, param.display_id);
             break;
-        case TOUCH_UP:
-            ret = CallBool(env, g_touch_up_method, param.args.touch.p.x, param.args.touch.p.y, param.display_id);
+        }
+        case TOUCH_UP: {
+            const Position &touchPoint = FirstTouchPoint(param.args.touch);
+            ret = CallBool(env, g_touch_up_method, touchPoint.x, touchPoint.y, param.display_id);
             break;
+        }
         case KEY_DOWN:
             ret = CallBool(env, g_key_down_method, param.args.key.key_code, param.display_id, 0);
             break;

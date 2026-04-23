@@ -9,9 +9,9 @@ interface IRootRuntimeService {
     void stopRun();
     void setMonitorSurface(in Surface surface);
     boolean startWindowedGame(String resourceId);
-    boolean touchDown(int x, int y);
-    boolean touchMove(int x, int y);
-    boolean touchUp(int x, int y);
+    boolean touchDown(int contactId, int x, int y);
+    boolean touchMove(int contactId, int x, int y);
+    boolean touchUp(int contactId, int x, int y);
     int getWindowedDisplayId();
     void stopWindowedPreview();
     boolean setDisplayPower(boolean on);

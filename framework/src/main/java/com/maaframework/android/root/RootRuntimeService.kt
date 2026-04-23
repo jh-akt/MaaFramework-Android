@@ -205,21 +205,21 @@ class RootRuntimeService(
         return launched
     }
 
-    override fun touchDown(x: Int, y: Int): Boolean {
-        return dispatchWindowTouch(x, y) { tx, ty, displayId ->
-            DriverClass.touchDown(tx, ty, displayId)
+    override fun touchDown(contactId: Int, x: Int, y: Int): Boolean {
+        return dispatchWindowTouch(contactId, x, y) { id, tx, ty, displayId ->
+            DriverClass.touchDown(id, tx, ty, displayId)
         }
     }
 
-    override fun touchMove(x: Int, y: Int): Boolean {
-        return dispatchWindowTouch(x, y) { tx, ty, displayId ->
-            DriverClass.touchMove(tx, ty, displayId)
+    override fun touchMove(contactId: Int, x: Int, y: Int): Boolean {
+        return dispatchWindowTouch(contactId, x, y) { id, tx, ty, displayId ->
+            DriverClass.touchMove(id, tx, ty, displayId)
         }
     }
 
-    override fun touchUp(x: Int, y: Int): Boolean {
-        return dispatchWindowTouch(x, y) { tx, ty, displayId ->
-            DriverClass.touchUp(tx, ty, displayId)
+    override fun touchUp(contactId: Int, x: Int, y: Int): Boolean {
+        return dispatchWindowTouch(contactId, x, y) { id, tx, ty, displayId ->
+            DriverClass.touchUp(id, tx, ty, displayId)
         }
     }
 
@@ -580,9 +580,10 @@ class RootRuntimeService(
     }
 
     private inline fun dispatchWindowTouch(
+        contactId: Int,
         x: Int,
         y: Int,
-        block: (x: Int, y: Int, displayId: Int) -> Boolean,
+        block: (contactId: Int, x: Int, y: Int, displayId: Int) -> Boolean,
     ): Boolean {
         val displayId = VirtualDisplayManager.getDisplayId()
         if (displayId == DefaultDisplayConfig.DISPLAY_NONE) {
@@ -590,7 +591,7 @@ class RootRuntimeService(
         }
         val tx = x.coerceIn(0, DefaultDisplayConfig.WIDTH - 1)
         val ty = y.coerceIn(0, DefaultDisplayConfig.HEIGHT - 1)
-        return block(tx, ty, displayId)
+        return block(contactId, tx, ty, displayId)
     }
 
     private fun runtimeRootDirectory(): File {

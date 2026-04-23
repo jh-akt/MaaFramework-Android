@@ -2,6 +2,7 @@ package com.maaframework.android.sample.bbb
 
 import android.app.Application
 import android.util.Log
+import android.view.Surface
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.maaframework.android.catalog.InterfaceCatalogLoader
@@ -26,7 +27,14 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+enum class MaaBbbTab {
+    Home,
+    Tasks,
+    Logs,
+}
+
 data class MainUiState(
+    val activeTab: MaaBbbTab = MaaBbbTab.Home,
     val manifest: MaaProjectManifest = MaaProjectManifest(),
     val catalog: CatalogSnapshot = CatalogSnapshot(),
     val rootReport: RootEnvironmentReport = RootEnvironmentReport(),
@@ -55,6 +63,7 @@ class MainViewModel(
     private var runtimeClient: MaaRuntimeClient? = null
     private var pollJob: Job? = null
     private var connectJob: Job? = null
+    private var previewSurface: Surface? = null
     private var logCursor = 0L
 
     init {
@@ -78,6 +87,10 @@ class MainViewModel(
             selectedResourceId = resourceId,
             selectedTaskId = selectedTaskId,
         )
+    }
+
+    fun selectTab(tab: MaaBbbTab) {
+        _uiState.value = _uiState.value.copy(activeTab = tab)
     }
 
     fun selectTask(taskId: String) {
@@ -146,6 +159,45 @@ class MainViewModel(
             onSuccess = { prepared ->
                 _uiState.value = _uiState.value.copy(
                     lastMessage = if (prepared) "Runtime prepared" else "Runtime prepare request failed",
+                )
+            },
+        )
+    }
+
+    fun startWindowedGame() {
+        val resourceId = _uiState.value.selectedResourceId
+        runServiceAction(
+            actionName = "Opening game",
+            action = { it.startWindowedGame(resourceId) },
+            onSuccess = { opened ->
+                _uiState.value = _uiState.value.copy(
+                    lastMessage = if (opened) {
+                        "Windowed game launched"
+                    } else {
+                        "Windowed game launch failed"
+                    },
+                )
+            },
+        )
+    }
+
+    fun setPreviewSurface(surface: Surface?) {
+        previewSurface = surface
+        runtimeClient?.setMonitorSurface(surface)
+    }
+
+    fun toggleDisplayPower() {
+        val restoreScreen = _uiState.value.runtimeState.displayPowerOffActive
+        runServiceAction(
+            actionName = if (restoreScreen) "Restoring screen power" else "Turning screen off",
+            action = { it.setDisplayPower(restoreScreen) },
+            onSuccess = { changed ->
+                _uiState.value = _uiState.value.copy(
+                    lastMessage = if (changed) {
+                        if (restoreScreen) "Screen power restored" else "Screen turned off for background run"
+                    } else {
+                        "Display power change failed"
+                    },
                 )
             },
         )
@@ -222,6 +274,7 @@ class MainViewModel(
     private fun bindService(client: MaaRuntimeClient) {
         runtimeClient = client
         logCursor = 0L
+        runCatching { client.setMonitorSurface(previewSurface) }
         _uiState.value = _uiState.value.copy(
             busy = false,
             rootConnected = true,
@@ -353,6 +406,7 @@ class MainViewModel(
 
     override fun onCleared() {
         pollJob?.cancel()
+        runCatching { runtimeClient?.setMonitorSurface(null) }
         session.disconnect(runtimeClient)
         runtimeClient = null
         super.onCleared()
