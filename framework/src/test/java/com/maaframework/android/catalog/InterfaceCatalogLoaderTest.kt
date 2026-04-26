@@ -116,4 +116,72 @@ class InterfaceCatalogLoaderTest {
         assertTrue(task.options.any { it.id == "SharedOption" })
         assertFalse(task.options.any { it.id == "UnsupportedOption" })
     }
+
+    @Test
+    fun `parseCatalog resolves Maa style option locale keys`() {
+        val catalog = loader.parseCatalog(
+            interfaceText = """
+                {
+                  "task": [
+                    {
+                      "name": "SellProduct",
+                      "label": "${'$'}task.SellProduct.label",
+                      "entry": "SellProduct",
+                      "option": ["PriorityItem", "CountOption"]
+                    }
+                  ],
+                  "option": {
+                    "PriorityItem": {
+                      "type": "select",
+                      "label": "${'$'}task.SellProduct.PriorityItem1",
+                      "default_case": "无",
+                      "cases": [
+                        { "name": "无" },
+                        {
+                          "name": "精选荞愈胶囊",
+                          "label": "${'$'}item.BuckCapsuleA"
+                        }
+                      ]
+                    },
+                    "CountOption": {
+                      "type": "input",
+                      "label": "${'$'}option.CountOption.label",
+                      "inputs": [
+                        {
+                          "name": "MaxCount",
+                          "default": "1",
+                          "verify": "[0-9]+",
+                          "pattern_msg": "${'$'}option.CountOption.MaxCount.error"
+                        }
+                      ]
+                    }
+                  }
+                }
+            """.trimIndent(),
+            localeText = """
+                {
+                  "task.SellProduct.label": "售卖产品",
+                  "task.SellProduct.PriorityItem1": "优先物品 1",
+                  "item.BuckCapsuleA": "精选荞愈胶囊",
+                  "option.CountOption.label": "数量设置",
+                  "option.CountOption.inputs.MaxCount.label": "最大数量",
+                  "option.CountOption.inputs.MaxCount.description": "达到数量后停止",
+                  "option.CountOption.MaxCount.error": "请输入数字"
+                }
+            """.trimIndent(),
+            importResolver = { error("unexpected import") },
+        )
+
+        val task = catalog.tasks.single()
+        assertEquals("售卖产品", task.label)
+
+        val priority = task.options.single { it.id == "PriorityItem" }
+        assertEquals("优先物品 1", priority.label)
+        assertEquals(listOf("无", "精选荞愈胶囊"), priority.cases.map { it.label })
+
+        val input = task.options.single { it.id == "CountOption" }.inputs.single()
+        assertEquals("最大数量", input.label)
+        assertEquals("达到数量后停止", input.description)
+        assertEquals("请输入数字", input.patternMessage)
+    }
 }

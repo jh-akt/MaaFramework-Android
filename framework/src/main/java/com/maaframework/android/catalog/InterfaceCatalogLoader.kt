@@ -282,15 +282,20 @@ class InterfaceCatalogLoader(
             )
         }
 
-        val inputs = obj["input"].asObjects().mapNotNull { inputObj ->
+        val inputs = (obj["input"].asObjects() + obj["inputs"].asObjects()).mapNotNull { inputObj ->
             val name = inputObj["name"].primitiveContent() ?: return@mapNotNull null
             TaskOptionInput(
                 name = name,
-                label = resolveText(inputObj["label"].primitiveContent(), localeMap, fallback = name),
-                description = resolveText(inputObj["description"].primitiveContent(), localeMap, fallback = ""),
+                label = resolveOptionInputLabel(optionId, inputObj, name, localeMap),
+                description = resolveOptionInputDescription(optionId, inputObj, name, localeMap),
                 defaultValue = inputObj["default"]?.jsonPrimitive?.contentOrNull.orEmpty(),
                 verifyRegex = inputObj["verify"]?.jsonPrimitive?.contentOrNull.orEmpty(),
-                patternMessage = resolveText(inputObj["pattern_message"].primitiveContent(), localeMap, fallback = ""),
+                patternMessage = resolveText(
+                    keyOrText = inputObj["pattern_message"].primitiveContent()
+                        ?: inputObj["pattern_msg"].primitiveContent(),
+                    localeMap = localeMap,
+                    fallback = "",
+                ),
                 pipelineType = inputObj["pipeline_type"]?.jsonPrimitive?.contentOrNull.orEmpty(),
             )
         }
@@ -351,6 +356,7 @@ class InterfaceCatalogLoader(
         return when {
             direct != null -> direct
             keyOrText.startsWith("@") -> localeMap[keyOrText.removePrefix("@")] ?: fallback
+            keyOrText.startsWith("$") -> localeMap[keyOrText.removePrefix("$")] ?: fallback
             else -> keyOrText
         }
     }
@@ -373,11 +379,64 @@ class InterfaceCatalogLoader(
         caseName: String,
         localeMap: Map<String, String>,
     ): String {
-        return resolveText(
+        val explicit = resolveText(
             keyOrText = obj["label"].primitiveContent(),
             localeMap = localeMap,
-            fallback = "$optionId:$caseName",
+            fallback = "",
         )
+        if (explicit.isNotBlank()) {
+            return explicit
+        }
+
+        return localeMap["option.$optionId.cases.$caseName.label"]
+            ?: localeMap["option.$optionId.$caseName.label"]
+            ?: when (caseName) {
+                "Yes" -> "开启"
+                "No" -> "关闭"
+                else -> caseName
+            }
+    }
+
+    private fun resolveOptionInputLabel(
+        optionId: String,
+        obj: JsonObject,
+        inputName: String,
+        localeMap: Map<String, String>,
+    ): String {
+        val explicit = resolveText(
+            keyOrText = obj["label"].primitiveContent(),
+            localeMap = localeMap,
+            fallback = "",
+        )
+        if (explicit.isNotBlank()) {
+            return explicit
+        }
+
+        return localeMap["option.$optionId.inputs.$inputName.label"]
+            ?: localeMap["option.$optionId.$inputName.label"]
+            ?: localeMap["option.$inputName.label"]
+            ?: inputName
+    }
+
+    private fun resolveOptionInputDescription(
+        optionId: String,
+        obj: JsonObject,
+        inputName: String,
+        localeMap: Map<String, String>,
+    ): String {
+        val explicit = resolveText(
+            keyOrText = obj["description"].primitiveContent(),
+            localeMap = localeMap,
+            fallback = "",
+        )
+        if (explicit.isNotBlank()) {
+            return explicit
+        }
+
+        return localeMap["option.$optionId.inputs.$inputName.description"]
+            ?: localeMap["option.$optionId.$inputName.description"]
+            ?: localeMap["option.$inputName.description"]
+            ?: ""
     }
 
     private fun JsonElement?.asObjects(): List<JsonObject> {
