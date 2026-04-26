@@ -46,10 +46,12 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -84,12 +86,15 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.maaframework.android.catalog.TaskOptionSupport
+import com.maaframework.android.model.PresetDescriptor
+import com.maaframework.android.model.ResourceDescriptor
 import com.maaframework.android.model.TaskDescriptor
 import com.maaframework.android.model.TaskOptionDescriptor
 import com.maaframework.android.model.TaskOptionType
 import com.maaframework.android.preview.DefaultDisplayConfig
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 object MaaUiDefaults {
     object Spacing {
@@ -103,6 +108,458 @@ object MaaUiDefaults {
         val card: Dp = 8.dp
         val inner: Dp = 6.dp
         val pill: Dp = 999.dp
+    }
+}
+
+enum class MaaHomeTone {
+    Neutral,
+    Positive,
+    Warning,
+    Error,
+}
+
+data class MaaHomeInfo(
+    val label: String,
+    val value: String,
+    val tone: MaaHomeTone = MaaHomeTone.Neutral,
+)
+
+data class MaaHomeService(
+    val label: String,
+    val value: String,
+    val tone: MaaHomeTone,
+    val loading: Boolean = false,
+)
+
+data class MaaHomeStatus(
+    val text: String,
+    val active: Boolean,
+)
+
+data class MaaHomeAction(
+    val title: String,
+    val actionLabel: String,
+    val enabled: Boolean = true,
+    val description: String? = null,
+    val onClick: () -> Unit,
+)
+
+data class MaaHomeProgress(
+    val fraction: Float,
+    val label: String,
+)
+
+@Composable
+fun MaaHomePanel(
+    overview: List<MaaHomeInfo>,
+    service: MaaHomeService,
+    statuses: List<MaaHomeStatus>,
+    actions: List<MaaHomeAction>,
+    modifier: Modifier = Modifier,
+    overviewTitle: String = "概览",
+    actionsTitle: String = "快捷操作",
+    resourceTitle: String = "全局与资源",
+    resourceContent: (@Composable () -> Unit)? = null,
+) {
+    LazyColumn(
+        modifier = modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = MaaUiDefaults.Spacing.sm),
+        verticalArrangement = Arrangement.spacedBy(MaaUiDefaults.Spacing.sm),
+    ) {
+        item {
+            MaaHomeSectionHeader(title = overviewTitle)
+            MaaHomeGroupCard {
+                overview.forEachIndexed { index, info ->
+                    if (index > 0) {
+                        MaaHomeDivider()
+                    }
+                    MaaHomeInfoRow(
+                        label = info.label,
+                        value = info.value,
+                        valueColor = maaHomeToneColor(info.tone),
+                    )
+                }
+                MaaHomeDivider()
+                MaaHomeServiceRow(
+                    label = service.label,
+                    value = service.value,
+                    color = maaHomeToneColor(service.tone),
+                    loading = service.loading,
+                )
+                if (statuses.isNotEmpty()) {
+                    MaaHomeDivider()
+                    FlowRow(
+                        modifier = Modifier.padding(vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(MaaUiDefaults.Spacing.sm),
+                        verticalArrangement = Arrangement.spacedBy(MaaUiDefaults.Spacing.sm),
+                    ) {
+                        statuses.forEach { status ->
+                            MaaStatusPill(
+                                text = status.text,
+                                active = status.active,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        if (actions.isNotEmpty()) {
+            item {
+                MaaHomeSectionHeader(title = actionsTitle)
+                MaaHomeGroupCard {
+                    actions.forEachIndexed { index, action ->
+                        if (index > 0) {
+                            MaaHomeDivider()
+                        }
+                        MaaHomeActionRow(action = action)
+                    }
+                }
+            }
+        }
+
+        if (resourceContent != null) {
+            item {
+                MaaHomeSectionHeader(title = resourceTitle)
+                resourceContent.invoke()
+            }
+        }
+    }
+}
+
+@Composable
+fun MaaHomeRepositoryPanel(
+    summary: String,
+    rootPath: String?,
+    error: String?,
+    progress: MaaHomeProgress?,
+    action: MaaHomeAction?,
+    modifier: Modifier = Modifier,
+    title: String = "资源仓库",
+    content: @Composable ColumnScope.() -> Unit = {},
+) {
+    MaaHomeGroupCard(modifier = modifier) {
+        MaaHomeInfoRow(
+            label = title,
+            value = summary,
+        )
+        rootPath?.takeIf { it.isNotBlank() }?.let {
+            MaaHomeDivider()
+            MaaHomeSupportText(
+                text = it,
+                tone = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        error?.takeIf { it.isNotBlank() }?.let {
+            MaaHomeDivider()
+            MaaHomeSupportText(
+                text = it,
+                tone = MaterialTheme.colorScheme.error,
+            )
+        }
+        progress?.let {
+            MaaHomeDivider()
+            MaaHomeProgressBlock(progress = it)
+        }
+        action?.let {
+            MaaHomeDivider()
+            MaaHomeActionRow(action = it)
+        }
+        content()
+    }
+}
+
+@Composable
+fun MaaHomeResourcePresetPanel(
+    resources: List<ResourceDescriptor>,
+    selectedResourceId: String?,
+    onSelectResource: (String) -> Unit,
+    presets: List<PresetDescriptor>,
+    selectedPresetId: String?,
+    onSelectPreset: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            text = "资源包",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (resources.isEmpty()) {
+            Text(
+                text = "资源同步完成后会在这里显示可选渠道。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                resources.forEach { resource ->
+                    MaaOptionChip(
+                        label = resource.label,
+                        selected = resource.id == selectedResourceId,
+                        onClick = { onSelectResource(resource.id) },
+                    )
+                }
+            }
+        }
+
+        Text(
+            text = "预设",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (presets.isEmpty()) {
+            Text(
+                text = "当前项目没有暴露可用预设。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                presets.forEach { preset ->
+                    MaaOptionChip(
+                        label = "${preset.label} (${preset.taskIds.size})",
+                        selected = preset.id == selectedPresetId,
+                        onClick = { onSelectPreset(preset.id) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun MaaHomeSectionHeader(
+    title: String,
+    modifier: Modifier = Modifier,
+) {
+    Text(
+        text = title,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = modifier.padding(start = 12.dp, top = 6.dp, bottom = 2.dp),
+    )
+}
+
+@Composable
+fun MaaHomeGroupCard(
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(MaaUiDefaults.CornerRadius.card),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface,
+        ),
+        border = BorderStroke(
+            1.dp,
+            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.8f),
+        ),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 4.dp),
+        ) {
+            content()
+        }
+    }
+}
+
+@Composable
+fun MaaHomeDivider(
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(start = 12.dp)
+            .height(1.dp)
+            .background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f)),
+    )
+}
+
+@Composable
+fun MaaHomeActionRow(
+    action: MaaHomeAction,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(enabled = action.enabled, onClick = action.onClick)
+            .padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = action.title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (action.enabled) 1f else 0.6f),
+            )
+            if (!action.description.isNullOrBlank()) {
+                Text(
+                    text = action.description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (action.enabled) 0.8f else 0.45f),
+                )
+            }
+        }
+        Text(
+            text = action.actionLabel,
+            style = MaterialTheme.typography.labelMedium,
+            color = if (action.enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            fontWeight = FontWeight.SemiBold,
+        )
+    }
+}
+
+@Composable
+fun MaaHomeInfoRow(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    valueColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(MaaUiDefaults.Spacing.md),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontWeight = FontWeight.Medium,
+        )
+        Text(
+            text = value,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium,
+            color = valueColor,
+            textAlign = TextAlign.End,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+fun MaaHomeServiceRow(
+    label: String,
+    value: String,
+    color: Color,
+    loading: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(MaaUiDefaults.Spacing.md),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontWeight = FontWeight.Medium,
+        )
+        Row(
+            modifier = Modifier.weight(1f),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(RoundedCornerShape(50))
+                    .background(color),
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = value,
+                style = MaterialTheme.typography.bodyMedium,
+                color = color,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (loading) {
+                Spacer(modifier = Modifier.width(8.dp))
+                CircularProgressIndicator(
+                    modifier = Modifier.size(14.dp),
+                    strokeWidth = 1.8.dp,
+                    color = color,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun MaaHomeSupportText(
+    text: String,
+    tone: Color,
+    modifier: Modifier = Modifier,
+) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodySmall,
+        color = tone,
+        modifier = modifier.padding(vertical = 8.dp),
+    )
+}
+
+@Composable
+fun MaaHomeProgressBlock(
+    progress: MaaHomeProgress,
+    modifier: Modifier = Modifier,
+) {
+    val percentText = "${(progress.fraction * 100).roundToInt().coerceIn(0, 100)}%"
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = progress.label,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = percentText,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        }
+        LinearProgressIndicator(
+            progress = { progress.fraction },
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(percent = 50)),
+        )
     }
 }
 
@@ -1133,4 +1590,14 @@ private fun Context.findActivity(): Activity? {
 
 private fun compactTaskLabel(task: TaskDescriptor): String {
     return task.label.takeIf { it.isNotBlank() } ?: task.id
+}
+
+@Composable
+private fun maaHomeToneColor(tone: MaaHomeTone): Color {
+    return when (tone) {
+        MaaHomeTone.Neutral -> MaterialTheme.colorScheme.onSurfaceVariant
+        MaaHomeTone.Positive -> MaterialTheme.colorScheme.primary
+        MaaHomeTone.Warning -> MaterialTheme.colorScheme.tertiary
+        MaaHomeTone.Error -> MaterialTheme.colorScheme.error
+    }
 }
