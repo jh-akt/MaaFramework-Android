@@ -1,9 +1,7 @@
 .gradle/
 .kotlin/
 /build/
-/app/build/
 /framework/build/
-/app/.cxx/
 /framework/.cxx/
 local.properties
 key.properties

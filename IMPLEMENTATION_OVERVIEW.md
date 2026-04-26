@@ -13,7 +13,7 @@
 - 16:9 虚拟屏创建、应用拉起、预览和触控注入
 - 宿主应用可直接调用的高层 Session / Client API
 
-当前仓库不是一个 Maven 发布好的 SDK，而是一套已经能落地运行的 Android 框架工程，结构上分成“可复用库 + 示例宿主”。
+当前仓库不是一个 Maven 发布好的 SDK，而是一套已经能落地运行的 Android 框架工程。Maa_bbb 示例宿主已经拆到同级 `../Maa-bbb-Android`，并通过 Gradle 子项目引用这里的 `framework/` 模块。
 
 ## 2. 模块划分
 
@@ -30,9 +30,9 @@ Android Library 模块，承载主要实现。对外可关注这几层：
 - 目录解析与项目约定：`catalog/`、`project/`
 - JNI 桥：`bridge/`
 
-### `app/`
+### `../Maa-bbb-Android/app/`
 
-示例宿主应用，当前用 `Maa_bbb` 作为接入样例。它的作用不是增加新框架能力，而是演示：
+示例宿主应用已经从本仓库移到同级项目，当前用 `Maa_bbb` 作为接入样例。它的作用不是增加新框架能力，而是演示：
 
 - 宿主如何初始化框架
 - 如何做 root 诊断、连接 runtime、准备 runtime、启动任务
@@ -353,21 +353,26 @@ Root Runtime 通过下面两条链路对宿主暴露虚拟屏交互能力：
 
 ## 10. 示例应用如何接入 `Maa_bbb`
 
-`app/build.gradle.kts` 目前做了几件很实用的接入工作：
+Maa_bbb 示例应用现在位于同级 `../Maa-bbb-Android`，通过 Gradle 子项目引用本仓库的框架模块：
 
-- 从 `../Maa_bbb/assets` 同步项目资产
-- 从 `runtime/` 同步 bundled runtime
-- 把 `runtime/maafw/*.so` 同步到 APK `jniLibs`
-- 把 `MaaCommonAssets/OCR/ppocr_v5/zh_cn` 覆盖到 `resource/base/model/ocr`
-- 对两个 pipeline JSON 做构建期补丁，适配当前样例识别场景
+```kotlin
+include(":framework")
+project(":framework").projectDir = file("../MaaFramework-Android/framework")
+```
 
-这说明当前框架的推荐接入姿势不是在运行时远程下载资源，而是：
+示例应用的 `app/build.gradle.kts` 继续负责：
 
-- 项目资产直接打包进 APK
-- runtime 也跟 APK 一起分发
+- 依赖 `implementation(project(":framework"))`
+- 从 `../MaaFramework-Android/runtime/` 同步 bundled runtime
+- 把 `../MaaFramework-Android/runtime/maafw/*.so` 同步到 APK `jniLibs`
+
+这说明当前框架的推荐接入姿势仍然是：
+
+- App 项目负责项目资产和 runtime 的打包策略
+- 框架模块负责 Root Runtime、目录解析、虚拟屏和 MAA 调度
 - Root Runtime 再从 APK 解包到 `/data/local/tmp`
 
-这种方式更适合 Android 端做本地闭环调试。
+这种分工可以让框架保持通用，同时让不同 MAA 项目的 Android 宿主各自维护自己的 UI 和配置。
 
 ## 11. 日志、失败截图和诊断导出
 
@@ -434,7 +439,7 @@ Root Runtime 通过下面两条链路对宿主暴露虚拟屏交互能力：
 7. `framework/src/main/java/com/maaframework/android/preview/VirtualDisplayManager.kt`
 8. `framework/src/main/java/com/maaframework/android/catalog/InterfaceCatalogLoader.kt`
 9. `framework/src/main/java/com/maaframework/android/project/MaaProjectManifest.kt`
-10. `app/build.gradle.kts`
+10. `../Maa-bbb-Android/app/build.gradle.kts`
 
 ## 14. 后续继续抽象时的方向
 

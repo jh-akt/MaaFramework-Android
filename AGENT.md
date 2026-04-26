@@ -1,7 +1,5 @@
 # Agent Notes
 
-Before making further changes in this repo, read:
+Primary guidance for agents in this repository lives in [CLAUDE.md](CLAUDE.md).
 
-- [docs/SESSION_SUMMARY.md](docs/SESSION_SUMMARY.md)
-
-That file records the framework extraction decisions, sample-app wiring, and the current root-environment blocker from the latest Android debugging session.
+Read `CLAUDE.md` first, then follow any task-specific instructions from the user.

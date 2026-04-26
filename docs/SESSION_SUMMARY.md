@@ -7,6 +7,8 @@ Reference repos:
 - source extraction baseline: sibling `../MaaEnd-Android`
 - sample/debug assets: sibling `../Maa_bbb`
 
+Update 2026-04-26: Maa_bbb 的 Android 宿主应用已经拆到同级 `../Maa-bbb-Android`，本仓库保留 `framework/`、`runtime/`、`tools/` 等框架内容。新的 App 项目通过 Gradle 子项目引用 `../MaaFramework-Android/framework`。
+
 ## 1. 本轮工作的目标
 
 从 `MaaEnd-Android` 中抽出一套更通用的 Android 框架，使任意 MAA 项目都能通过：
