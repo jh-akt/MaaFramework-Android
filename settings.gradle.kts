@@ -17,3 +17,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "MaaFrameworkAndroid"
 include(":framework")
+include(":framework-ui")
