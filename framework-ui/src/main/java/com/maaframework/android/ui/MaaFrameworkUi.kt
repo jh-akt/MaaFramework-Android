@@ -55,6 +55,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.Surface as MaterialSurface
 import androidx.compose.runtime.Composable
@@ -147,6 +148,16 @@ data class MaaHomeAction(
 data class MaaHomeProgress(
     val fraction: Float,
     val label: String,
+)
+
+data class MaaSettingsChoice(
+    val value: String,
+    val label: String,
+)
+
+data class MaaLogMetric(
+    val label: String,
+    val value: String,
 )
 
 @Composable
@@ -560,6 +571,186 @@ fun MaaHomeProgressBlock(
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(percent = 50)),
         )
+    }
+}
+
+@Composable
+fun MaaSettingsPanel(
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(MaaUiDefaults.Spacing.sm),
+    ) {
+        content()
+        Spacer(modifier = Modifier.height(MaaUiDefaults.Spacing.xs))
+    }
+}
+
+@Composable
+fun MaaSettingsSection(
+    title: String,
+    modifier: Modifier = Modifier,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        MaaHomeSectionHeader(title = title)
+        MaaHomeGroupCard(content = content)
+    }
+}
+
+@Composable
+fun MaaSettingsChoiceRow(
+    title: String,
+    options: List<MaaSettingsChoice>,
+    selected: String,
+    onSelected: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    description: String? = null,
+    enabled: Boolean = true,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = if (enabled) 1f else 0.6f),
+            fontWeight = FontWeight.Medium,
+        )
+        description?.takeIf { it.isNotBlank() }?.let {
+            Text(
+                text = it,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (enabled) 0.8f else 0.45f),
+            )
+        }
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(MaaUiDefaults.Spacing.sm),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            options.forEach { option ->
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(MaaUiDefaults.CornerRadius.inner))
+                        .clickable(enabled = enabled) { onSelected(option.value) }
+                        .padding(end = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(
+                        selected = option.value == selected,
+                        enabled = enabled,
+                        onClick = { onSelected(option.value) },
+                    )
+                    Text(
+                        text = option.label,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun MaaRuntimeLogsPanel(
+    lines: List<String>,
+    modifier: Modifier = Modifier,
+    title: String = "运行日志",
+    subtitle: String? = null,
+    metrics: List<MaaLogMetric> = emptyList(),
+    detailLines: List<String> = emptyList(),
+    emptyTitle: String = "暂无日志",
+    emptyDescription: String = "开始任务后，这里会显示运行日志。",
+) {
+    MaaSectionCard(
+        title = title,
+        subtitle = subtitle,
+        modifier = modifier.fillMaxSize(),
+        fillHeight = true,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(MaaUiDefaults.Spacing.md),
+        ) {
+            if (metrics.isNotEmpty()) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(MaaUiDefaults.Spacing.sm),
+                    verticalArrangement = Arrangement.spacedBy(MaaUiDefaults.Spacing.sm),
+                ) {
+                    metrics.forEach { metric ->
+                        MaaLogMetricTile(
+                            label = metric.label,
+                            value = metric.value,
+                        )
+                    }
+                }
+            }
+
+            detailLines.filter { it.isNotBlank() }.forEach { line ->
+                Text(
+                    text = line,
+                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .background(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                        shape = RoundedCornerShape(MaaUiDefaults.CornerRadius.inner),
+                    )
+                    .padding(MaaUiDefaults.Spacing.md),
+            ) {
+                MaaRuntimeLogList(
+                    lines = lines,
+                    modifier = Modifier.fillMaxSize(),
+                    emptyTitle = emptyTitle,
+                    emptyDescription = emptyDescription,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MaaLogMetricTile(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+) {
+    MaterialSurface(
+        modifier = modifier.widthIn(min = 104.dp),
+        shape = RoundedCornerShape(MaaUiDefaults.CornerRadius.inner),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                text = value,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
