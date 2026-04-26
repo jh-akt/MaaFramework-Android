@@ -127,10 +127,10 @@ class RootRuntimeService(
             return false
         }
 
-        if (!snapshot.capabilities.hasBundledGoService || !snapshot.capabilities.hasBundledMaaFramework) {
+        if (!snapshot.capabilities.hasRunnableAgent || !snapshot.capabilities.hasBundledMaaFramework) {
             failRun(
                 taskId = request.taskId,
-                message = "Bundled Maa runtime missing. Stage runtime/agent/go-service and runtime/maafw first.",
+                message = buildMissingRuntimeMessage(),
             )
             return false
         }
@@ -457,6 +457,21 @@ class RootRuntimeService(
         }
     }
 
+    private fun buildMissingRuntimeMessage(): String {
+        val missing = mutableListOf<String>()
+        if (!snapshot.capabilities.hasBundledMaaFramework) {
+            missing += "runtime/maafw"
+        }
+        if (!snapshot.capabilities.hasRunnableAgent) {
+            val preferredAgent = snapshot.capabilities.agentRuntimes
+                .firstOrNull { it.source == "project-interface" }
+                ?: snapshot.capabilities.agentRuntimes.firstOrNull()
+            val detail = preferredAgent?.detail?.takeIf { it.isNotBlank() && it != "ok" }
+            missing += detail ?: "Android agent runtime"
+        }
+        return "Bundled Maa runtime missing: ${missing.joinToString("; ")}"
+    }
+
     private fun captureFailureScreenshot(taskId: String?): String? {
         val root = runtimeRoot ?: return null
         val screenshotsDir = File(root, "diagnostics").apply { mkdirs() }
@@ -469,7 +484,7 @@ class RootRuntimeService(
                 bitmap.recycle()
             }
         }.getOrDefault(false)
-        return if (previewCaptured || runShellCommand("/system/bin/screencap -p ${screenshot.absolutePath}")) {
+        return if (previewCaptured || runShellCommand("/system/bin/screencap -p ${shellQuote(screenshot.absolutePath)}")) {
             screenshot.absolutePath
         } else {
             null
@@ -499,6 +514,10 @@ class RootRuntimeService(
             log("Shell command failed: ${error.message}")
             false
         }
+    }
+
+    private fun shellQuote(value: String): String {
+        return "'" + value.replace("'", "'\\''") + "'"
     }
 
     private fun ensureDisplayPowerOn(reason: String) {

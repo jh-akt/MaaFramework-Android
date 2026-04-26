@@ -8,6 +8,7 @@ import com.maaframework.android.preview.hidden.ServiceManager
 
 object ActivityUtils {
     private const val TAG = "ActivityUtils"
+    private val startedVirtualPackages = mutableMapOf<Int, String>()
 
     fun startApp(
         context: Context,
@@ -16,6 +17,13 @@ object ActivityUtils {
         forceStop: Boolean = true,
         excludeFromRecents: Boolean = true,
     ): Boolean {
+        synchronized(startedVirtualPackages) {
+            if (!forceStop && displayId != 0 && startedVirtualPackages[displayId] == packageName) {
+                Log.i(TAG, "startApp skipped duplicate package=$packageName displayId=$displayId")
+                return true
+            }
+        }
+
         val pm = context.packageManager
         val intent = pm.getLaunchIntentForPackage(packageName)
             ?: pm.getLeanbackLaunchIntentForPackage(packageName)
@@ -47,10 +55,22 @@ object ActivityUtils {
             }
             val ret = ServiceManager.getActivityManager().startActivity(intent, launchOptions.toBundle())
             Log.i(TAG, "startApp package=$packageName displayId=$displayId ret=$ret")
-            ret >= 0
+            (ret >= 0).also { started ->
+                if (started && displayId != 0) {
+                    synchronized(startedVirtualPackages) {
+                        startedVirtualPackages[displayId] = packageName
+                    }
+                }
+            }
         } catch (e: Exception) {
             Log.e(TAG, "startApp failed package=$packageName displayId=$displayId", e)
             false
+        }
+    }
+
+    fun forgetVirtualDisplay(displayId: Int) {
+        synchronized(startedVirtualPackages) {
+            startedVirtualPackages.remove(displayId)
         }
     }
 

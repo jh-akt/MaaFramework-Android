@@ -3,8 +3,10 @@ package com.maaframework.android.runtime
 import android.content.Context
 import android.content.res.AssetManager
 import com.maaframework.android.catalog.JsonWithComments
+import com.maaframework.android.model.RuntimeAgentCapability
 import com.maaframework.android.model.RuntimeCapabilities
 import com.maaframework.android.model.RuntimeLogChunk
+import com.maaframework.android.project.MaaProjectManifestLoader
 import java.io.File
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -28,6 +30,11 @@ object RuntimeBootstrapper {
         "tasks",
         "resource",
         "resource_adb",
+        "agent",
+        "custom",
+        "requirements.txt",
+        "python",
+        "MaaAgentBinary",
     )
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
@@ -37,38 +44,66 @@ object RuntimeBootstrapper {
         runtimeRoot: File = defaultRuntimeRoot(context),
     ): RuntimePrepareResult {
         val assets = context.assets
+        val projectManifest = MaaProjectManifestLoader.loadOrDefault(assets)
+        val persistentRepoStatus = resolveResourceRepositoryStatus(context, projectManifest, logger)
 
         runtimeRoot.mkdirs()
         File(runtimeRoot, "logs").mkdirs()
+        File(runtimeRoot, "debug").mkdirs()
         File(runtimeRoot, "diagnostics").mkdirs()
         stopStaleAgentProcesses(runtimeRoot, logger)
         resetRuntimePayload(runtimeRoot, logger)
 
-        collectRequiredAssetEntries(assets).forEach { entry ->
-            copyAssetEntry(assets, entry, File(runtimeRoot, entry), logger)
+        if (!persistentRepoStatus.available) {
+            val detail = persistentRepoStatus.lastError?.takeIf { it.isNotBlank() }
+                ?: "resource repository not synced yet"
+            error("GitHub resource repository unavailable: $detail")
         }
-        logger.log("Runtime resources prepared from bundled assets")
+
+        val repoRoot = PersistentProjectRepositoryManager.currentRoot(context, projectManifest)
+        collectRequiredRepoEntries(repoRoot).forEach { entry ->
+            copyFileEntry(File(repoRoot, entry), File(runtimeRoot, entry), logger)
+        }
+        logger.log("Runtime resources prepared from persistent GitHub repository")
 
         if (assetEntryExists(assets, "bundled_runtime")) {
             copyAssetEntry(assets, "bundled_runtime", runtimeRoot, logger)
         }
         overlayBundledPrivatePipeline(runtimeRoot, logger)
+        seedPythonAgentDeployVersion(runtimeRoot, logger)
+        applyPythonAgentCompatibilityPatches(runtimeRoot, logger)
 
-        val goService = File(runtimeRoot, "agent/go-service")
         val maafwDir = File(runtimeRoot, "maafw")
-        goService.parentFile?.mkdirs()
-        if (goService.exists()) {
-            goService.setExecutable(true, false)
+        val agentRuntimes = RuntimeAgentResolver.detect(runtimeRoot)
+        agentRuntimes.forEach { agent ->
+            agent.executableFile?.takeIf { it.isFile }?.setExecutable(true, false)
+        }
+        val selectedAgent = RuntimeAgentResolver.resolve(runtimeRoot)
+        agentRuntimes.forEach { agent ->
+            logger.log(
+                "Detected agent runtime: kind=${agent.kind} source=${agent.source} " +
+                    "runnable=${agent.isRunnable} path=${agent.displayPath} detail=${agent.detail}",
+            )
         }
 
         val capabilities = RuntimeCapabilities(
-            hasBundledGoService = goService.exists(),
+            hasBundledGoService = File(runtimeRoot, "agent/go-service").isFile,
             hasBundledMaaFramework = maafwDir.exists() && maafwDir.list()?.isNotEmpty() == true,
             canLaunchWindowedGame = true,
+            agentRuntimes = agentRuntimes.map { agent ->
+                RuntimeAgentCapability(
+                    kind = agent.kind,
+                    source = agent.source,
+                    path = agent.displayPath,
+                    runnable = agent.isRunnable,
+                    detail = agent.detail,
+                )
+            },
+            hasRunnableAgent = selectedAgent?.isRunnable == true,
         )
         val message = buildString {
             append("Runtime prepared")
-            if (!capabilities.hasBundledGoService || !capabilities.hasBundledMaaFramework) {
+            if (!capabilities.hasRunnableAgent || !capabilities.hasBundledMaaFramework) {
                 append(" with missing bundled Maa runtime components")
             }
         }
@@ -85,20 +120,37 @@ object RuntimeBootstrapper {
         return File("/data/local/tmp/${context.packageName}/maaframework-runtime/$RUNTIME_VERSION")
     }
 
-    private fun collectRequiredAssetEntries(assets: AssetManager): List<String> {
+    private fun resolveResourceRepositoryStatus(
+        context: Context,
+        projectManifest: com.maaframework.android.project.MaaProjectManifest,
+        logger: RuntimeLogger,
+    ): PersistentProjectRepositoryStatus {
+        val existing = PersistentProjectRepositoryManager.loadStatus(context, projectManifest)
+        if (existing.available) {
+            return existing
+        }
+        logger.log("Persistent GitHub repository unavailable, syncing project resources before prepare")
+        return PersistentProjectRepositoryManager.ensureAvailable(
+            context = context,
+            manifest = projectManifest,
+            logger = logger::log,
+        )
+    }
+
+    private fun collectRequiredRepoEntries(repoRoot: File): List<String> {
         val entries = linkedSetOf<String>()
-        entries += baseAssetEntries.filter { entry -> assetEntryExists(assets, entry) }
+        entries += baseAssetEntries.filter { entry -> File(repoRoot, entry).exists() }
         runCatching {
-            val root = parseInterfaceRoot(assets)
+            val root = parseInterfaceRoot(repoRoot)
             collectAdditionalEntries(root).forEach { entries += it }
         }.onFailure { error ->
-            loggerSafe("Failed to parse interface.json while collecting runtime assets: ${error.message}")
+            loggerSafe("Failed to parse repository interface.json while collecting runtime assets: ${error.message}")
         }
         return entries.toList()
     }
 
-    private fun parseInterfaceRoot(assets: AssetManager): JsonObject {
-        val text = assets.open("interface.json").bufferedReader(Charsets.UTF_8).use { it.readText() }
+    private fun parseInterfaceRoot(repoRoot: File): JsonObject {
+        val text = File(repoRoot, "interface.json").readText()
         return json.parseToJsonElement(JsonWithComments.stripLineComments(text)).jsonObject
     }
 
@@ -109,6 +161,15 @@ object RuntimeBootstrapper {
         }
         root["controller"].asObjects().forEach { controller ->
             stringArray(controller["attach_resource_path"]).forEach { entries += normalizeAssetPath(it) }
+        }
+        (root["agent"] as? JsonObject)?.let { agent ->
+            (agent["child_exec"] as? JsonPrimitive)
+                ?.contentOrNull
+                ?.let(::normalizeAgentConfigPath)
+                ?.let { entries += it }
+            stringArray(agent["child_args"]).forEach { path ->
+                normalizeAgentConfigPath(path)?.let { entries += it }
+            }
         }
         return entries.toList()
     }
@@ -164,6 +225,27 @@ object RuntimeBootstrapper {
         logger.log("Extracted asset directory: $assetPath")
     }
 
+    private fun copyFileEntry(
+        source: File,
+        target: File,
+        logger: RuntimeLogger,
+    ) {
+        if (!source.exists()) {
+            return
+        }
+        if (source.isDirectory) {
+            copyDirectoryContents(source, target)
+            logger.log("Extracted repository directory: ${source.relativeToOrSelf(source.parentFile ?: source).path}")
+            return
+        }
+        target.parentFile?.mkdirs()
+        source.inputStream().use { input ->
+            target.outputStream().use { output ->
+                input.copyTo(output)
+            }
+        }
+    }
+
     private fun resetRuntimePayload(runtimeRoot: File, logger: RuntimeLogger) {
         val staleEntries = listOf(
             "interface.json",
@@ -172,7 +254,10 @@ object RuntimeBootstrapper {
             "resource",
             "resource_adb",
             "agent",
+            "custom",
             "maafw",
+            "python",
+            "requirements.txt",
             "MaaPiCli",
             "bundled_runtime",
             "private_pipeline",
@@ -209,6 +294,51 @@ object RuntimeBootstrapper {
         }
     }
 
+    private fun seedPythonAgentDeployVersion(runtimeRoot: File, logger: RuntimeLogger) {
+        val deployFile = File(runtimeRoot, "agent/deploy/deploy.py")
+        val mainFile = File(runtimeRoot, "agent/main.py")
+        if (!deployFile.isFile || !mainFile.isFile) {
+            return
+        }
+        runCatching {
+            val version = parseInterfaceRoot(runtimeRoot)["version"]
+                ?.let { it as? JsonPrimitive }
+                ?.contentOrNull
+                ?: return
+            val versionFile = File(runtimeRoot, "agent/deploy/.version")
+            versionFile.parentFile?.mkdirs()
+            versionFile.writeText(version)
+            logger.log("Seeded Python agent deploy version: $version")
+        }.onFailure { error ->
+            logger.log("Failed to seed Python agent deploy version: ${error.message}")
+        }
+    }
+
+    private fun applyPythonAgentCompatibilityPatches(runtimeRoot: File, logger: RuntimeLogger) {
+        copyPythonModuleAlias(
+            runtimeRoot = runtimeRoot,
+            from = "agent/custom/action/Role/Mobius.py",
+            to = "agent/custom/action/Role/Meibiwusi.py",
+            logger = logger,
+        )
+    }
+
+    private fun copyPythonModuleAlias(
+        runtimeRoot: File,
+        from: String,
+        to: String,
+        logger: RuntimeLogger,
+    ) {
+        val source = File(runtimeRoot, from)
+        val target = File(runtimeRoot, to)
+        if (!source.isFile || target.exists()) {
+            return
+        }
+        target.parentFile?.mkdirs()
+        source.copyTo(target, overwrite = false)
+        logger.log("Added Python module compatibility alias: $to -> $from")
+    }
+
     private fun copyDirectoryContents(sourceRoot: File, targetRoot: File) {
         sourceRoot.walkTopDown().forEach { file ->
             val relative = file.relativeTo(sourceRoot)
@@ -227,8 +357,12 @@ object RuntimeBootstrapper {
     }
 
     private fun stopStaleAgentProcesses(runtimeRoot: File, logger: RuntimeLogger) {
-        val agentPath = File(runtimeRoot, "agent/go-service").absolutePath
-        val command = "pkill -f '$agentPath' || true"
+        val runtimePath = runtimeRoot.absolutePath
+        val command = listOf(
+            "pkill -f '$runtimePath/agent/' || true",
+            "pkill -f '$runtimePath/python/' || true",
+            "pkill -f '$runtimePath/MaaAgentBinary/' || true",
+        ).joinToString("; ")
         runCatching {
             val process = ProcessBuilder("/system/bin/sh", "-c", command)
                 .redirectErrorStream(true)
@@ -238,9 +372,9 @@ object RuntimeBootstrapper {
             if (output.isNotBlank()) {
                 logger.log(output)
             }
-            logger.log("Stopped stale go-service processes before prepare: exit=$code")
+            logger.log("Stopped stale agent processes before prepare: exit=$code")
         }.onFailure { error ->
-            logger.log("Failed to stop stale go-service processes: ${error.message}")
+            logger.log("Failed to stop stale agent processes: ${error.message}")
         }
     }
 
@@ -256,6 +390,23 @@ object RuntimeBootstrapper {
 
     private fun normalizeAssetPath(path: String): String {
         return path.removePrefix("./")
+    }
+
+    private fun normalizeAgentConfigPath(path: String): String? {
+        var normalized = path.replace('\\', '/').trim()
+        if (normalized.isBlank() || normalized.startsWith("-") || normalized.startsWith("/")) {
+            return null
+        }
+        while (normalized.startsWith("./")) {
+            normalized = normalized.substring(2)
+        }
+        if (normalized.startsWith("../agent/")) {
+            return normalized.substring(3)
+        }
+        while (normalized.startsWith("../")) {
+            normalized = normalized.substring(3)
+        }
+        return normalized.takeIf { it.contains("/") }
     }
 
     private fun deleteRecursively(file: File) {

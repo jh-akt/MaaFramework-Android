@@ -118,10 +118,21 @@ data class FailureArtifact(
 )
 
 @Serializable
+data class RuntimeAgentCapability(
+    val kind: String = "",
+    val source: String = "",
+    val path: String = "",
+    val runnable: Boolean = false,
+    val detail: String = "",
+)
+
+@Serializable
 data class RuntimeCapabilities(
     val hasBundledGoService: Boolean = false,
     val hasBundledMaaFramework: Boolean = false,
     val canLaunchWindowedGame: Boolean = true,
+    val agentRuntimes: List<RuntimeAgentCapability> = emptyList(),
+    val hasRunnableAgent: Boolean = hasBundledGoService || agentRuntimes.any { it.runnable },
 )
 
 @Serializable

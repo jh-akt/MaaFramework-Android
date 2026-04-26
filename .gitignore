@@ -12,5 +12,6 @@ key.properties
 runtime/agent/go-service
 runtime/agent/maa-go-runner
 runtime/maafw/
+runtime/python/
 runtime/runtime-manifest.json
 tmp/

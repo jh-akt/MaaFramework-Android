@@ -6,6 +6,38 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
 @Serializable
+data class GitHubResourceSubmoduleConfig(
+    @SerialName("api_path")
+    val apiPath: String,
+    @SerialName("target_path")
+    val targetPath: String,
+    @SerialName("fallback_git_url")
+    val fallbackGitUrl: String? = null,
+)
+
+@Serializable
+data class GitHubResourceCopyMapping(
+    @SerialName("from")
+    val fromPath: String,
+    @SerialName("to")
+    val toPath: String,
+)
+
+@Serializable
+data class GitHubResourceRepositoryConfig(
+    val owner: String,
+    val repo: String,
+    val branch: String = "main",
+    @SerialName("asset_root_path")
+    val assetRootPath: String = "assets",
+    @SerialName("required_paths")
+    val requiredPaths: List<String> = listOf("interface.json", "resource"),
+    val submodules: List<GitHubResourceSubmoduleConfig> = emptyList(),
+    @SerialName("copy_mappings")
+    val copyMappings: List<GitHubResourceCopyMapping> = emptyList(),
+)
+
+@Serializable
 data class MaaProjectManifest(
     @SerialName("project_id")
     val projectId: String = "sample-project",
@@ -23,6 +55,8 @@ data class MaaProjectManifest(
     val attachResourcePaths: List<String> = listOf("./resource_adb"),
     @SerialName("resource_package_names")
     val resourcePackageNames: Map<String, String> = emptyMap(),
+    @SerialName("github_resource_repository")
+    val githubResourceRepository: GitHubResourceRepositoryConfig? = null,
 ) {
     fun packageNameFor(resourceId: String?): String? {
         if (resourceId.isNullOrBlank()) {
@@ -31,6 +65,11 @@ data class MaaProjectManifest(
         return resourcePackageNames[resourceId]
             ?: defaultResourceId?.let(resourcePackageNames::get)
             ?: resourcePackageNames.values.firstOrNull()
+    }
+
+    fun hasGitHubResourceRepository(): Boolean {
+        val config = githubResourceRepository ?: return false
+        return config.owner.isNotBlank() && config.repo.isNotBlank()
     }
 }
 

@@ -3,6 +3,7 @@ package com.maaframework.android.maa;
 import com.maaframework.android.bridge.NativeBridgeLib;
 import com.maaframework.android.preview.DefaultDisplayConfig;
 import com.maaframework.android.preview.VirtualDisplayManager;
+import com.maaframework.android.runtime.RuntimeAgentResolver;
 
 import android.content.Context;
 import android.content.res.Resources;
@@ -494,14 +495,20 @@ public final class MaaFrameworkBridge {
             return;
         }
 
-        File goService = new File(runtimeRootDir, "agent/go-service");
-        if (!goService.isFile()) {
+        RuntimeAgentResolver.AgentRuntime agentRuntime = RuntimeAgentResolver.resolve(runtimeRootDir);
+        if (agentRuntime == null) {
             return;
+        }
+        if (!agentRuntime.isRunnable()) {
+            throw new IllegalStateException(agentRuntime.getDetail());
         }
 
         disconnectAgent();
 
-        String identifier = "maaframework-android-" + UUID.randomUUID();
+        String configuredIdentifier = agentRuntime.getIdentifier();
+        String identifier = configuredIdentifier == null || configuredIdentifier.isBlank()
+                ? "maaframework-android-" + UUID.randomUUID()
+                : configuredIdentifier;
         Pointer identifierBuffer = library.MaaStringBufferCreate();
         if (identifierBuffer == null || Pointer.nativeValue(identifierBuffer) == 0L) {
             throw new IllegalStateException("failed to create identifier buffer");
@@ -514,13 +521,13 @@ public final class MaaFrameworkBridge {
         }
 
         checkTrue(agentClientLibrary.MaaAgentClientBindResource(agentClient, resource), "bind resource to agent client");
-        startGoService(identifier);
+        startAgentRuntime(agentRuntime, identifier);
         checkTrue(agentClientLibrary.MaaAgentClientSetTimeout(agentClient, 20_000L), "set agent timeout");
 
-        long deadline = System.currentTimeMillis() + 8_000L;
+        long deadline = System.currentTimeMillis() + 20_000L;
         while (true) {
             if (agentClientLibrary.MaaAgentClientConnect(agentClient) != 0) {
-                Log.i(TAG, "agent client connected");
+                Log.i(TAG, "agent client connected: " + agentRuntime.getKind());
                 break;
             }
             if (System.currentTimeMillis() >= deadline) {
@@ -559,25 +566,119 @@ public final class MaaFrameworkBridge {
         }
     }
 
-    private void startGoService(String identifier) throws IOException {
+    private void startAgentRuntime(RuntimeAgentResolver.AgentRuntime agentRuntime, String identifier) throws IOException {
         File logsDir = new File(runtimeRootDir, "logs");
         if (!logsDir.exists() && !logsDir.mkdirs()) {
             throw new IOException("failed to create logs dir: " + logsDir);
         }
-        File logFile = new File(logsDir, "go-service.log");
-        File goService = new File(runtimeRootDir, "agent/go-service");
+        File logFile = new File(logsDir, agentRuntime.getLogFileName());
 
-        ProcessBuilder builder = new ProcessBuilder(goService.getAbsolutePath(), identifier);
-        builder.directory(runtimeRootDir);
+        ProcessBuilder builder = new ProcessBuilder(agentRuntime.buildCommand(identifier));
+        builder.directory(agentRuntime.getWorkingDirectory());
         builder.redirectErrorStream(true);
         builder.redirectOutput(ProcessBuilder.Redirect.appendTo(logFile));
 
-        builder.environment().put("LD_LIBRARY_PATH", new File(runtimeRootDir, "maafw").getAbsolutePath());
-        builder.environment().putAll(buildPiEnv());
-        builder.environment().put("MAAEND_GO_LOG_LEVEL", normalizeGoServiceLogLevel(logLevel));
+        java.util.Map<String, String> environment = builder.environment();
+        environment.put("LD_LIBRARY_PATH", buildAgentLibraryPath(agentRuntime));
+        environment.putAll(buildPythonEnv(agentRuntime));
+        environment.putAll(buildPiEnv());
+        environment.put("MAAEND_GO_LOG_LEVEL", normalizeGoServiceLogLevel(logLevel));
+        environment.put("MAA_AGENT_LOG_LEVEL", normalizeGoServiceLogLevel(logLevel));
 
         agentProcess = builder.start();
-        Log.i(TAG, "started go-service process");
+        Log.i(TAG, "started agent process: " + agentRuntime.getKind() + " " + agentRuntime.getDisplayPath());
+    }
+
+    private String buildAgentLibraryPath(RuntimeAgentResolver.AgentRuntime agentRuntime) {
+        ArrayList<String> paths = new ArrayList<>();
+        addDirectoryIfExists(paths, new File(runtimeRootDir, "maafw"));
+
+        File pythonHome = findPythonHome(agentRuntime);
+        if (pythonHome != null) {
+            addDirectoryIfExists(paths, new File(pythonHome, "lib"));
+        }
+
+        String inherited = System.getenv("LD_LIBRARY_PATH");
+        if (inherited != null && !inherited.isBlank()) {
+            paths.add(inherited);
+        }
+        return String.join(File.pathSeparator, paths);
+    }
+
+    private java.util.Map<String, String> buildPythonEnv(RuntimeAgentResolver.AgentRuntime agentRuntime) {
+        java.util.HashMap<String, String> env = new java.util.HashMap<>();
+        if (!"python".equals(agentRuntime.getKind())) {
+            return env;
+        }
+
+        File pythonHome = findPythonHome(agentRuntime);
+        if (pythonHome == null) {
+            return env;
+        }
+
+        ArrayList<String> pythonPath = new ArrayList<>();
+        addDirectoryIfExists(pythonPath, runtimeRootDir);
+        addDirectoryIfExists(pythonPath, new File(runtimeRootDir, "agent"));
+        addDirectoryIfExists(pythonPath, findPythonSitePackages(pythonHome));
+
+        env.put("PYTHONHOME", pythonHome.getAbsolutePath());
+        env.put("PYTHONNOUSERSITE", "1");
+        env.put("PYTHONUNBUFFERED", "1");
+        env.put("PYTHONUTF8", "1");
+        addDirectoryEnv(env, "MAAFW_BINARY_PATH", new File(runtimeRootDir, "maafw"));
+        if (!pythonPath.isEmpty()) {
+            env.put("PYTHONPATH", String.join(File.pathSeparator, pythonPath));
+        }
+        return env;
+    }
+
+    private File findPythonHome(RuntimeAgentResolver.AgentRuntime agentRuntime) {
+        File executable = agentRuntime.getExecutableFile();
+        if (executable != null) {
+            File parent = executable.getParentFile();
+            if (parent != null && "bin".equals(parent.getName())) {
+                File home = parent.getParentFile();
+                if (home != null && home.isDirectory()) {
+                    return home;
+                }
+            }
+            if (parent != null && parent.isDirectory()) {
+                return parent;
+            }
+        }
+
+        File bundled = new File(runtimeRootDir, "python");
+        return bundled.isDirectory() ? bundled : null;
+    }
+
+    private File findPythonSitePackages(File pythonHome) {
+        File lib = new File(pythonHome, "lib");
+        File[] children = lib.listFiles();
+        if (children == null) {
+            return null;
+        }
+        for (File child : children) {
+            if (!child.isDirectory() || !child.getName().startsWith("python")) {
+                continue;
+            }
+            File sitePackages = new File(child, "site-packages");
+            if (sitePackages.isDirectory()) {
+                return sitePackages;
+            }
+        }
+        return null;
+    }
+
+    private static void addDirectoryIfExists(List<String> paths, File directory) {
+        if (directory != null && directory.isDirectory()) {
+            paths.add(directory.getAbsolutePath());
+        }
+    }
+
+    private static void addDirectoryEnv(java.util.Map<String, String> env, String key, File directory) {
+        if (directory != null && directory.isDirectory()) {
+            env.put(key, directory.getAbsolutePath());
+        }
     }
 
     private void applyFrameworkLogLevel() {
@@ -728,8 +829,9 @@ public final class MaaFrameworkBridge {
         try {
             JSONObject root = new JSONObject();
             root.put("library_path", new File(context.getApplicationInfo().nativeLibraryDir, "libbridge.so").getAbsolutePath());
-            File agentPath = new File(runtimeRoot, "agent/go-service");
-            if (agentPath.isFile()) {
+            RuntimeAgentResolver.AgentRuntime agentRuntime = RuntimeAgentResolver.resolve(runtimeRoot);
+            File agentPath = agentRuntime == null ? null : agentRuntime.getAgentPathForConfig();
+            if (agentPath != null && agentPath.isFile()) {
                 root.put("agent_path", agentPath.getAbsolutePath());
                 root.put("root_path", runtimeRoot.getAbsolutePath());
                 root.put("client_type", "MaaFrameworkAndroid");
@@ -739,7 +841,7 @@ public final class MaaFrameworkBridge {
             screen.put("height", resolution[1]);
             root.put("screen_resolution", screen);
             root.put("display_id", effectiveDisplayId);
-            root.put("force_stop", usingVirtualDisplay);
+            root.put("force_stop", false);
             return root.toString();
         } catch (Exception e) {
             throw new IllegalStateException("failed to build controller config", e);

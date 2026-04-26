@@ -100,7 +100,11 @@ object VirtualDisplayManager {
 
     private fun releaseResources() {
         Log.i(TAG, "releaseResources()")
+        val releasedDisplayId = displayId.get()
         virtualDisplay.getAndSet(null)?.release()
+        if (releasedDisplayId != DefaultDisplayConfig.DISPLAY_NONE) {
+            ActivityUtils.forgetVirtualDisplay(releasedDisplayId)
+        }
         displayId.set(DefaultDisplayConfig.DISPLAY_NONE)
         NativeBridgeLib.releaseNativeCapturer()
     }
