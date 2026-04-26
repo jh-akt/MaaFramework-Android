@@ -243,13 +243,15 @@ class InterfaceCatalogLoader(
         controllerAliases: Map<String, String>,
         seen: Set<String>,
     ): TaskOptionDescriptor? {
+        val rawCases = obj["cases"].asObjects()
         val type = when (obj["type"].primitiveContent()) {
             "switch" -> TaskOptionType.Switch
             "checkbox" -> TaskOptionType.Checkbox
             "select" -> TaskOptionType.Select
             "input" -> TaskOptionType.Input
-            else -> return null
-        }
+            null -> inferOptionType(rawCases)
+            else -> null
+        } ?: return null
 
         val controllers = stringArray(obj["controller"])
         if (!supportsControllers(controllers, controllerAliases)) {
@@ -262,7 +264,7 @@ class InterfaceCatalogLoader(
             else -> emptyList()
         }
 
-        val cases = obj["cases"].asObjects().mapNotNull { caseObj ->
+        val cases = rawCases.mapNotNull { caseObj ->
             val caseName = caseObj["name"].primitiveContent() ?: return@mapNotNull null
             val pipelineOverride = caseObj["pipeline_override"] as? JsonObject ?: JsonObject(emptyMap())
             val nestedOptionIds = stringArray(caseObj["option"])
@@ -331,6 +333,21 @@ class InterfaceCatalogLoader(
         }
     }
 
+    private fun inferOptionType(cases: List<JsonObject>): TaskOptionType? {
+        if (cases.isEmpty()) {
+            return null
+        }
+        val caseNames = cases.mapNotNull { it["name"].primitiveContent() }
+        return if (
+            caseNames.size == 2 &&
+            caseNames.map { it.uppercase() }.toSet() == setOf("YES", "NO")
+        ) {
+            TaskOptionType.Switch
+        } else {
+            TaskOptionType.Select
+        }
+    }
+
     private fun readAssetText(path: String): String {
         val assetManager = checkNotNull(assets) { "AssetManager is required for load()" }
         return assetManager.open(path).bufferedReader(Charsets.UTF_8).use { it.readText() }
@@ -391,8 +408,8 @@ class InterfaceCatalogLoader(
         return localeMap["option.$optionId.cases.$caseName.label"]
             ?: localeMap["option.$optionId.$caseName.label"]
             ?: when (caseName) {
-                "Yes" -> "开启"
-                "No" -> "关闭"
+                "Yes", "YES" -> "开启"
+                "No", "NO" -> "关闭"
                 else -> caseName
             }
     }

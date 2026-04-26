@@ -779,7 +779,7 @@ public final class MaaFrameworkBridge {
                 if (rawPath == null || rawPath.isBlank()) {
                     continue;
                 }
-                String normalizedPath = rawPath.startsWith("./") ? rawPath : "./" + rawPath;
+                String normalizedPath = normalizeProjectResourcePath(rawPath);
                 normalized.add(normalizedPath);
             }
         }
@@ -796,7 +796,7 @@ public final class MaaFrameworkBridge {
                 if (rawPath == null || rawPath.isBlank()) {
                     continue;
                 }
-                String normalizedPath = rawPath.startsWith("./") ? rawPath : "./" + rawPath;
+                String normalizedPath = normalizeProjectResourcePath(rawPath);
                 normalized.add(normalizedPath);
             }
         }
@@ -807,10 +807,25 @@ public final class MaaFrameworkBridge {
         if (rawPath == null || rawPath.isBlank()) {
             return "resource";
         }
-        if (rawPath.startsWith("./")) {
-            return rawPath.substring(2);
+        String normalized = normalizeProjectResourcePath(rawPath);
+        if (normalized.startsWith("./")) {
+            return normalized.substring(2);
         }
-        return rawPath;
+        return normalized;
+    }
+
+    private static String normalizeProjectResourcePath(String rawPath) {
+        String trimmed = rawPath.trim();
+        if (trimmed.equals("{PROJECT_DIR}")) {
+            return ".";
+        }
+        if (trimmed.startsWith("{PROJECT_DIR}/")) {
+            return "./" + trimmed.substring("{PROJECT_DIR}/".length());
+        }
+        if (trimmed.startsWith("./") || trimmed.startsWith("/")) {
+            return trimmed;
+        }
+        return "./" + trimmed;
     }
 
     private static String buildControllerConfig(File runtimeRoot, Context context) {

@@ -118,6 +118,48 @@ class InterfaceCatalogLoaderTest {
     }
 
     @Test
+    fun `parseCatalog infers option type when Maa option omits type`() {
+        val catalog = loader.parseCatalog(
+            interfaceText = """
+                {
+                  "task": [
+                    {
+                      "name": "Daily",
+                      "entry": "Daily",
+                      "option": ["BooleanOption", "ChoiceOption"]
+                    }
+                  ],
+                  "option": {
+                    "BooleanOption": {
+                      "cases": [
+                        { "name": "YES" },
+                        { "name": "NO" }
+                      ]
+                    },
+                    "ChoiceOption": {
+                      "cases": [
+                        { "name": "A" },
+                        { "name": "B" },
+                        { "name": "C" }
+                      ]
+                    }
+                  }
+                }
+            """.trimIndent(),
+            localeText = null,
+            importResolver = { error("unexpected import") },
+        )
+
+        val options = catalog.tasks.single().options
+        val booleanOption = options.single { it.id == "BooleanOption" }
+        val choiceOption = options.single { it.id == "ChoiceOption" }
+        assertEquals("开启", booleanOption.cases.first { it.name == "YES" }.label)
+        assertEquals("关闭", booleanOption.cases.first { it.name == "NO" }.label)
+        assertEquals(com.maaframework.android.model.TaskOptionType.Switch, booleanOption.type)
+        assertEquals(com.maaframework.android.model.TaskOptionType.Select, choiceOption.type)
+    }
+
+    @Test
     fun `parseCatalog resolves Maa style option locale keys`() {
         val catalog = loader.parseCatalog(
             interfaceText = """

@@ -37,6 +37,7 @@ data class PersistentProjectRepositorySyncProgress(
 object PersistentProjectRepositoryManager {
     private const val META_FILE_NAME = ".maaframework-resource.json"
     private const val USER_AGENT = "MaaFramework-Android/0.1"
+    private const val DOWNLOAD_ATTEMPTS = 4
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     fun currentRoot(context: Context, manifest: MaaProjectManifest): File {
@@ -326,29 +327,47 @@ object PersistentProjectRepositoryManager {
         logger: ((String) -> Unit)?,
         onProgress: ((Float) -> Unit)? = null,
     ): File {
-        logger?.invoke("Downloading $url")
-        val tempFile = File.createTempFile(prefix, ".zip")
-        val connection = openConnection(url)
-        val totalBytes = connection.contentLengthLong.takeIf { it > 0L }
-        connection.inputStream.use { input ->
-            FileOutputStream(tempFile).use { output ->
-                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                var downloadedBytes = 0L
-                while (true) {
-                    val read = input.read(buffer)
-                    if (read < 0) {
-                        break
-                    }
-                    output.write(buffer, 0, read)
-                    downloadedBytes += read
-                    totalBytes?.let { total ->
-                        onProgress?.invoke((downloadedBytes.toFloat() / total.toFloat()).coerceIn(0f, 1f))
+        var lastError: Throwable? = null
+        repeat(DOWNLOAD_ATTEMPTS) { index ->
+            val attempt = index + 1
+            var connection: HttpURLConnection? = null
+            var tempFile: File? = null
+            try {
+                logger?.invoke("Downloading $url (attempt $attempt/$DOWNLOAD_ATTEMPTS)")
+                tempFile = File.createTempFile(prefix, ".zip")
+                connection = openConnection(url)
+                val totalBytes = connection.contentLengthLong.takeIf { it > 0L }
+                connection.inputStream.use { input ->
+                    FileOutputStream(tempFile).use { output ->
+                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                        var downloadedBytes = 0L
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read < 0) {
+                                break
+                            }
+                            output.write(buffer, 0, read)
+                            downloadedBytes += read
+                            totalBytes?.let { total ->
+                                onProgress?.invoke((downloadedBytes.toFloat() / total.toFloat()).coerceIn(0f, 1f))
+                            }
+                        }
                     }
                 }
+                onProgress?.invoke(1f)
+                return tempFile
+            } catch (error: Throwable) {
+                lastError = error
+                tempFile?.delete()
+                logger?.invoke("Download failed on attempt $attempt/$DOWNLOAD_ATTEMPTS: ${error.message ?: error::class.java.simpleName}")
+                if (attempt < DOWNLOAD_ATTEMPTS) {
+                    Thread.sleep(1_500L * attempt)
+                }
+            } finally {
+                connection?.disconnect()
             }
         }
-        onProgress?.invoke(1f)
-        return tempFile
+        throw lastError ?: IllegalStateException("Download failed")
     }
 
     private fun reportProgress(

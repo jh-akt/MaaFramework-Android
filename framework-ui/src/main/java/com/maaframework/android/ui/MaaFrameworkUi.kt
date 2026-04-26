@@ -1440,8 +1440,14 @@ fun MaaRuntimeLogList(
     }
 
     val listState = rememberLazyListState()
+    var previousLineCount by remember { mutableStateOf(0) }
     LaunchedEffect(lines.size) {
-        listState.animateScrollToItem(lines.lastIndex)
+        val lastVisibleIndex = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+        val shouldFollowLog = previousLineCount == 0 || lastVisibleIndex >= previousLineCount - 2
+        if (shouldFollowLog && !listState.isScrollInProgress) {
+            listState.scrollToItem(lines.lastIndex)
+        }
+        previousLineCount = lines.size
     }
     LazyColumn(
         modifier = modifier.fillMaxWidth(),
@@ -1495,16 +1501,24 @@ private fun MaaTaskListItem(
             horizontalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
-                Checkbox(
-                    checked = checked || running,
-                    onCheckedChange = onCheckedChange,
+                Box(
                     modifier = Modifier
-                        .size(16.dp)
-                        .graphicsLayer(
-                            scaleX = 0.72f,
-                            scaleY = 0.72f,
-                        ),
-                )
+                        .width(32.dp)
+                        .height(21.dp)
+                        .clickable { onCheckedChange(!(checked || running)) },
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    Checkbox(
+                        checked = checked || running,
+                        onCheckedChange = null,
+                        modifier = Modifier
+                            .size(16.dp)
+                            .graphicsLayer(
+                                scaleX = 0.72f,
+                                scaleY = 0.72f,
+                            ),
+                    )
+                }
             }
             Text(
                 text = label,
