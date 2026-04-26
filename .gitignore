@@ -4,6 +4,8 @@
 /dist/
 /framework/build/
 /framework/.cxx/
+/framework-ui/build/
+/framework-ui/.cxx/
 local.properties
 key.properties
 *.jks
