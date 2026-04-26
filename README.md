@@ -58,6 +58,25 @@ dependencies {
 val runtimeDir = rootProject.layout.projectDirectory.dir("../MaaFramework-Android/runtime")
 ```
 
+## Runtime 自动化
+
+框架仓库不把大型 runtime 二进制直接提交进 git。推荐流程是：
+
+1. 用 `tools/prepare_android_runtime.py` 把本地 Android runtime staged 到 `runtime/`。
+2. 用 `tools/package_android_runtime.py` 打包成 GitHub Release asset。
+3. 宿主 App 在 Gradle 构建时自动下载并解压该 release asset。
+
+默认打包命令：
+
+```bash
+python3 tools/package_android_runtime.py
+```
+
+默认输出：
+
+- `dist/maaframework-android-runtime-arm64-v8a.zip`
+- `dist/maaframework-android-runtime-arm64-v8a.zip.sha256`
+
 ## 适用前提
 
 - Android 11+
