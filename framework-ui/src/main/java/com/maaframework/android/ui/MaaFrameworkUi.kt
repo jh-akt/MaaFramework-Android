@@ -246,10 +246,37 @@ fun MaaHomeRepositoryPanel(
     progress: MaaHomeProgress?,
     action: MaaHomeAction?,
     modifier: Modifier = Modifier,
+    clearAction: MaaHomeAction? = null,
     title: String = "资源仓库",
     content: @Composable ColumnScope.() -> Unit = {},
 ) {
     MaaHomeGroupCard(modifier = modifier) {
+        MaaResourceRepositoryContent(
+            summary = summary,
+            rootPath = rootPath,
+            error = error,
+            progress = progress,
+            action = action,
+            clearAction = clearAction,
+            title = title,
+            content = content,
+        )
+    }
+}
+
+@Composable
+fun MaaResourceRepositoryContent(
+    summary: String,
+    rootPath: String?,
+    error: String?,
+    progress: MaaHomeProgress?,
+    action: MaaHomeAction?,
+    modifier: Modifier = Modifier,
+    clearAction: MaaHomeAction? = null,
+    title: String = "资源仓库",
+    content: @Composable ColumnScope.() -> Unit = {},
+) {
+    Column(modifier = modifier.fillMaxWidth()) {
         MaaHomeInfoRow(
             label = title,
             value = summary,
@@ -273,6 +300,10 @@ fun MaaHomeRepositoryPanel(
             MaaHomeProgressBlock(progress = it)
         }
         action?.let {
+            MaaHomeDivider()
+            MaaHomeActionRow(action = it)
+        }
+        clearAction?.let {
             MaaHomeDivider()
             MaaHomeActionRow(action = it)
         }

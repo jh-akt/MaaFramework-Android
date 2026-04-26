@@ -98,6 +98,34 @@ object PersistentProjectRepositoryManager {
         return updateFromGithub(context, manifest, logger, progress)
     }
 
+    fun clearLocalCache(
+        context: Context,
+        manifest: MaaProjectManifest,
+    ): PersistentProjectRepositoryStatus {
+        val config = manifest.githubResourceRepository
+            ?: return PersistentProjectRepositoryStatus(
+                available = false,
+                lastError = "GitHub resource repository is not configured",
+            )
+        return runCatching {
+            val baseDir = sharedBaseDir(context, manifest.projectId)
+            if (baseDir.exists()) {
+                deleteRecursively(baseDir)
+            }
+            loadStatus(context, manifest)
+        }.getOrElse { error ->
+            PersistentProjectRepositoryStatus(
+                available = false,
+                source = "github",
+                owner = config.owner,
+                repo = config.repo,
+                branch = config.branch,
+                rootPath = currentRoot(context, manifest).absolutePath,
+                lastError = error.message ?: error::class.java.simpleName,
+            )
+        }
+    }
+
     fun updateFromGithub(
         context: Context,
         manifest: MaaProjectManifest,
