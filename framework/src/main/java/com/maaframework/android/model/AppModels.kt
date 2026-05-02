@@ -150,6 +150,18 @@ data class RuntimeStateSnapshot(
     val lastDiagnosticsPath: String? = null,
 )
 
+fun RuntimeStateSnapshot.canToggleDisplayPower(runtimeConnected: Boolean): Boolean {
+    return runtimeConnected
+}
+
+fun RuntimeStateSnapshot.shouldKeepScreenOn(): Boolean {
+    return displayPowerOffActive || phase in setOf(
+        RunSessionPhase.Preparing,
+        RunSessionPhase.Running,
+        RunSessionPhase.Stopping,
+    )
+}
+
 @Serializable
 data class RuntimeLogChunk(
     val nextOffsetBytes: Long = 0L,
