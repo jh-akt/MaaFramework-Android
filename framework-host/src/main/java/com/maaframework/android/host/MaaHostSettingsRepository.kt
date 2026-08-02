@@ -120,8 +120,8 @@ class MaaHostSettingsRepository(
         }
         val settingsObject = root["settings"]?.jsonObject ?: error("配置文件缺少 settings")
         val normalized = normalizeLegacySettings(settingsObject)
-        val settings = json.decodeFromJsonElement<MaaHostSettings>(normalized)
-            .copy(logLevel = MaaLogLevels.normalize(json.decodeFromJsonElement<MaaHostSettings>(normalized).logLevel))
+        val decoded = json.decodeFromJsonElement<MaaHostSettings>(normalized)
+        val settings = decoded.copy(logLevel = MaaLogLevels.normalize(decoded.logLevel))
         replaceAll(settings)
         return settings
     }

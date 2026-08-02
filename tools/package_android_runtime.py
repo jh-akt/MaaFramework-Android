@@ -77,8 +77,9 @@ def main() -> int:
             arcname = source.relative_to(runtime_dir).as_posix()
             zip_file_with_permissions(archive, source, arcname)
         metadata = {
+            "schema_version": 1,
             "generated_at": datetime.now(timezone.utc).isoformat(),
-            "runtime_dir": str(runtime_dir),
+            "runtime_root": runtime_dir.name,
             "file_count": len(runtime_files),
         }
         archive.writestr(

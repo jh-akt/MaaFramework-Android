@@ -2,21 +2,18 @@
 
 `MaaFramework Android` 是一个把 MAA 项目封装成 Android Root 宿主应用的通用框架仓库。它提供可复用的运行时准备、Root Runtime 启动、任务目录解析、虚拟显示预览、触控转发和日志诊断能力。
 
-Maa_bbb 的实际 Android 应用已经拆到同级项目：
-
-```text
-/Users/haojiang/Code/
-  MaaFramework-Android/
-  Maa-bbb-Android/
-```
-
-`Maa-bbb-Android` 通过 Gradle 子项目引用本仓库的 `framework/` 模块。
+当前消费者通过 Git submodule 引用本仓库，应用仓与框架仓仍可独立发布。
 
 ## 当前内容
 
 - `framework/`
-  - Android Library 模块
-  - 负责 MaaFramework runtime 准备、Root Runtime 启动、任务与资源目录加载、预览窗口和诊断导出
+  - 稳定的底层 Android Library；负责 Root Runtime、Session/Client、目录解析、虚拟显示和诊断
+- `framework-host/`
+  - 不依赖 Compose 的宿主契约、设置 v2/旧配置迁移、任务策略、日志过滤与运行请求构建器
+- `framework-ui/`
+  - 一套可复用的主页、任务、设置、日志四页 Compose 宿主壳
+- `build-logic/`
+  - `com.maaframework.android.host-application` Gradle 插件；统一 Runtime 解析、校验和打包
 - `runtime/`
   - Android 运行时二进制暂存目录
   - App 项目构建时可从这里复制 runtime assets / JNI so
@@ -28,41 +25,60 @@ Maa_bbb 的实际 Android 应用已经拆到同级项目：
 ## 框架构建
 
 ```bash
-JAVA_HOME="/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home" \
-PATH="/opt/homebrew/opt/openjdk@21/bin:$PATH" \
-ANDROID_SDK_ROOT="$HOME/Library/Android/sdk" \
-ANDROID_HOME="$HOME/Library/Android/sdk" \
-./gradlew :framework:testDebugUnitTest
+./gradlew :framework:testDebugUnitTest :framework-host:testDebugUnitTest :framework-ui:compileDebugKotlin
+./gradlew -p build-logic build
+python3 -m unittest discover -s tools -p "test_*.py"
 ```
+
+需要 JDK 21、Android SDK 36；最低运行版本仍为 Android 11（API 30）。
 
 ## App 项目引用方式
 
-在同级 Android App 项目的 `settings.gradle.kts` 中挂载框架模块：
+在 Android App 项目的 `settings.gradle.kts` 中挂载框架模块和构建插件：
 
 ```kotlin
-include(":framework")
-project(":framework").projectDir = file("../MaaFramework-Android/framework")
+pluginManagement {
+    includeBuild("MaaFramework-Android/build-logic")
+}
+
+include(":framework", ":framework-host", ":framework-ui")
+project(":framework").projectDir = file("MaaFramework-Android/framework")
+project(":framework-host").projectDir = file("MaaFramework-Android/framework-host")
+project(":framework-ui").projectDir = file("MaaFramework-Android/framework-ui")
 ```
 
-App 模块继续使用：
+App 模块应用约定插件并依赖三个分层模块：
 
 ```kotlin
+plugins {
+    id("com.maaframework.android.host-application")
+}
+
 dependencies {
     implementation(project(":framework"))
+    implementation(project(":framework-host"))
+    implementation(project(":framework-ui"))
 }
 ```
 
-如果 App 还需要打包本仓库里的 runtime，可在 App 构建脚本里指向：
+插件保持兼容 `maafwRuntimeDir`、`maafwRuntimeUrl`、`maafwRuntimeRepo`、`maafwRuntimeTag`、`maafwRuntimeAsset` 和 `maafwRuntimeRefresh`。默认解析顺序是显式覆盖、本地暂存目录、GitHub Release；Release 压缩包会用同名 `.sha256` 文件校验。
+
+项目需要专用 Runtime 时只配置坐标：
 
 ```kotlin
-val runtimeDir = rootProject.layout.projectDirectory.dir("../MaaFramework-Android/runtime")
+maaRuntime {
+    localDirectory.set("runtime")
+    releaseRepo.set("owner/project-android")
+    releaseTag.set("android-runtime-v1")
+    releaseAsset.set("project-android-runtime-arm64-v8a.zip")
+}
 ```
 
 ## Runtime 自动化
 
 框架仓库不把大型 runtime 二进制直接提交进 git。推荐流程是：
 
-1. 用 `tools/prepare_android_runtime.py` 把本地 Android runtime staged 到 `runtime/`。
+1. 用 `tools/prepare_android_runtime.py --android-api 30` 把 Android runtime staged 到 `runtime/`；脚本支持 Windows、Linux、macOS 的 NDK host toolchain。
 2. 用 `tools/package_android_runtime.py` 打包成 GitHub Release asset。
 3. 宿主 App 在 Gradle 构建时自动下载并解压该 release asset。
 
@@ -76,6 +92,8 @@ python3 tools/package_android_runtime.py
 
 - `dist/maaframework-android-runtime-arm64-v8a.zip`
 - `dist/maaframework-android-runtime-arm64-v8a.zip.sha256`
+
+生成的 manifest 与 zip metadata 只记录相对路径，不写入开发机绝对路径。
 
 ## 适用前提
 
