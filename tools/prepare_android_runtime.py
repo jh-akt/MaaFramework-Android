@@ -19,6 +19,16 @@ PYTHON_LAUNCHER_SOURCE = PROJECT_ROOT / "tools" / "android-python-launcher" / "p
 PYTHON_SHIMS_DIR = PROJECT_ROOT / "tools" / "python-shims"
 
 
+def ndk_host_tag(platform_name: str = sys.platform) -> str:
+    if platform_name.startswith("win"):
+        return "windows-x86_64"
+    if platform_name == "darwin":
+        return "darwin-x86_64"
+    if platform_name.startswith("linux"):
+        return "linux-x86_64"
+    raise RuntimeError(f"Unsupported Android NDK host platform: {platform_name}")
+
+
 def detect_android_clang() -> tuple[str, str] | tuple[None, None]:
     sdk_root = os.environ.get("ANDROID_SDK_ROOT") or os.environ.get("ANDROID_HOME")
     if not sdk_root:
@@ -27,13 +37,16 @@ def detect_android_clang() -> tuple[str, str] | tuple[None, None]:
     if not ndk_root.exists():
         return None, None
 
+    android_api = os.environ.get("MAAFW_ANDROID_API", "30")
+    host_tag = ndk_host_tag()
     versions = sorted([p for p in ndk_root.iterdir() if p.is_dir()], reverse=True)
     for version_dir in versions:
-        toolchain = version_dir / "toolchains" / "llvm" / "prebuilt" / "darwin-x86_64" / "bin"
-        cc = toolchain / "aarch64-linux-android24-clang"
-        cxx = toolchain / "aarch64-linux-android24-clang++"
-        if cc.exists() and cxx.exists():
-            return str(cc), str(cxx)
+        toolchain = version_dir / "toolchains" / "llvm" / "prebuilt" / host_tag / "bin"
+        for suffix in ("", ".cmd", ".exe"):
+            cc = toolchain / f"aarch64-linux-android{android_api}-clang{suffix}"
+            cxx = toolchain / f"aarch64-linux-android{android_api}-clang++{suffix}"
+            if cc.exists() and cxx.exists():
+                return str(cc), str(cxx)
 
     return None, None
 
@@ -273,6 +286,7 @@ def main() -> int:
         help="Path to the MAA project repository used for agent sources",
     )
     parser.add_argument("--go-exe", default="go", help="Go executable path")
+    parser.add_argument("--android-api", type=int, default=30, help="Android API level used by NDK clang (default: 30)")
     parser.add_argument("--maafw-dir", type=Path, help="Vendored MaaFramework Android runtime directory")
     parser.add_argument("--python-runtime-dir", type=Path, help="Prebuilt Android Python runtime directory to bundle")
     parser.add_argument(
@@ -305,6 +319,9 @@ def main() -> int:
     parser.add_argument("--skip-runner", action="store_true", help="Skip cross-compiling tools/go-runner")
     parser.add_argument("--clear", action="store_true", help="Clear staged runtime directories before copying")
     args = parser.parse_args()
+    if args.android_api < 30:
+        raise ValueError("MaaFramework Android hosts require API level 30 or newer")
+    os.environ["MAAFW_ANDROID_API"] = str(args.android_api)
 
     output_dir: Path = args.output
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -325,29 +342,29 @@ def main() -> int:
 
     manifest: dict[str, object] = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "output_dir": str(output_dir),
-        "project_root": str(project_root),
+        "android_api": args.android_api,
+        "project": project_root.name,
         "agents": [],
     }
     agents: list[dict[str, str]] = []
 
     if not args.skip_go and go_service_dir.exists():
         go_binary = stage_go_service(args.go_exe, go_service_dir, output_dir / "agent")
-        manifest["go_service"] = str(go_binary)
-        agents.append({"kind": "go-service", "path": str(go_binary)})
+        manifest["go_service"] = go_binary.relative_to(output_dir).as_posix()
+        agents.append({"kind": "go-service", "path": go_binary.relative_to(output_dir).as_posix()})
 
     if not args.skip_python_agent and python_agent_entry.exists():
         python_agent = stage_python_agent(project_root, output_dir)
-        agents.append({"kind": "python", "path": str(python_agent)})
+        agents.append({"kind": "python", "path": python_agent.relative_to(output_dir).as_posix()})
 
     if args.python_runtime_dir:
         python_runtime = stage_python_runtime(args.python_runtime_dir, output_dir)
-        manifest["python_runtime"] = str(python_runtime)
+        manifest["python_runtime"] = python_runtime.relative_to(output_dir).as_posix()
 
     if args.python_android_archive:
         python_runtime = stage_python_android_archive(args.python_android_archive, output_dir)
-        manifest["python_runtime"] = str(python_runtime)
-        manifest["python_android_archive"] = str(args.python_android_archive)
+        manifest["python_runtime"] = python_runtime.relative_to(output_dir).as_posix()
+        manifest["python_android_archive"] = args.python_android_archive.name
 
     package_dirs = list(args.python_package_dir)
     if args.include_python_shims:
@@ -361,16 +378,16 @@ def main() -> int:
         for package_dir in package_dirs:
             stage_python_package_dir(package_dir, python_runtime)
         patch_maafw_python_for_android(python_runtime)
-        manifest["python_wheels"] = [str(path) for path in args.python_wheel]
-        manifest["python_package_dirs"] = [str(path) for path in package_dirs]
+        manifest["python_wheels"] = [path.name for path in args.python_wheel]
+        manifest["python_package_dirs"] = [path.name for path in package_dirs]
 
     if not args.skip_runner:
         runner_binary = stage_runner(args.go_exe, RUNNER_SOURCE_DIR, output_dir / "agent")
-        manifest["runner"] = str(runner_binary)
+        manifest["runner"] = runner_binary.relative_to(output_dir).as_posix()
 
     if args.maafw_dir:
         maafw_dir = stage_maafw(args.maafw_dir, output_dir / "maafw")
-        manifest["maafw"] = str(maafw_dir)
+        manifest["maafw"] = maafw_dir.relative_to(output_dir).as_posix()
 
     manifest["agents"] = agents
     manifest_path = output_dir / "runtime-manifest.json"

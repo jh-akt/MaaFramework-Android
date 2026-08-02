@@ -1,6 +1,7 @@
 .gradle/
 .kotlin/
 /build/
+/build-logic/build/
 /dist/
 /framework/build/
 /framework/.cxx/
@@ -18,3 +19,5 @@ runtime/maafw/
 runtime/python/
 runtime/runtime-manifest.json
 tmp/
+__pycache__/
+*.pyc
