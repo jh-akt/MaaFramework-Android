@@ -25,6 +25,7 @@ import kotlinx.serialization.json.jsonPrimitive
 class InterfaceCatalogLoader(
     private val assets: AssetManager? = null,
     private val supportedControllers: Set<String> = setOf("adb"),
+    private val assetRootPath: String = "",
 ) {
     private val json = Json {
         ignoreUnknownKeys = true
@@ -170,6 +171,7 @@ class InterfaceCatalogLoader(
     ): PresetDescriptor? {
         val id = obj["name"].primitiveContent() ?: return null
         val taskIds = obj["task"].asObjects()
+            .filter { task -> task["enabled"]?.jsonPrimitive?.booleanOrNull != false }
             .mapNotNull { task -> task["name"].primitiveContent() }
 
         return PresetDescriptor(
@@ -350,7 +352,7 @@ class InterfaceCatalogLoader(
 
     private fun readAssetText(path: String): String {
         val assetManager = checkNotNull(assets) { "AssetManager is required for load()" }
-        return assetManager.open(path).bufferedReader(Charsets.UTF_8).use { it.readText() }
+        return assetManager.open(listOf(assetRootPath.trim('/'), path.removePrefix("./")).filter { it.isNotEmpty() }.joinToString("/")).bufferedReader(Charsets.UTF_8).use { it.readText() }
     }
 
     private fun readAssetTextOrNull(path: String): String? {

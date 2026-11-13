@@ -39,7 +39,7 @@ class RootRuntimeService(
     private val context: Context,
 ) : IRootRuntimeService.Stub() {
     private val projectManifest = MaaProjectManifestLoader.loadOrDefault(context.assets)
-    private val catalogLoader = InterfaceCatalogLoader(context.assets, projectManifest.supportedControllers)
+    private val catalogLoader = InterfaceCatalogLoader(context.assets, projectManifest.supportedControllers, projectManifest.bundledResourcePath.orEmpty())
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
     private val stateLock = Any()
     private val executor = Executors.newSingleThreadExecutor()

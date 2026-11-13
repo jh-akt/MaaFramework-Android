@@ -65,6 +65,14 @@ object PersistentProjectRepositoryManager {
     }
 
     private fun loadStatusUnlocked(context: Context, manifest: MaaProjectManifest): PersistentProjectRepositoryStatus {
+        manifest.bundledResourcePath?.let { path ->
+            val available = runCatching { context.assets.open("$path/interface.json").close() }.isSuccess
+            return PersistentProjectRepositoryStatus(
+                available = available,
+                source = "bundled",
+                lastError = if (available) null else "APK 中缺少项目资源",
+            )
+        }
         val config = manifest.githubResourceRepository
             ?: return PersistentProjectRepositoryStatus(
                 available = false,

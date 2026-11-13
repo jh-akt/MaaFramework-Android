@@ -55,9 +55,24 @@ data class MaaProjectManifest(
     val attachResourcePaths: List<String> = listOf("./resource_adb"),
     @SerialName("resource_package_names")
     val resourcePackageNames: Map<String, String> = emptyMap(),
+    @SerialName("virtual_display_dpi")
+    val virtualDisplayDpi: Int = 160,
+    @SerialName("bundled_resource_path")
+    val bundledResourcePath: String? = null,
     @SerialName("github_resource_repository")
     val githubResourceRepository: GitHubResourceRepositoryConfig? = null,
 ) {
+    init {
+        require(virtualDisplayDpi > 0) { "virtual_display_dpi must be positive" }
+        require(bundledResourcePath == null || (
+            bundledResourcePath.isNotBlank() && !bundledResourcePath.startsWith("/") &&
+                bundledResourcePath.split('/').none { it == ".." || it == "." || it.isEmpty() }
+            )) { "bundled_resource_path must be a relative asset directory" }
+        require(bundledResourcePath == null || githubResourceRepository == null) {
+            "Choose either bundled resources or a GitHub repository"
+        }
+    }
+
     fun packageNameFor(resourceId: String?): String? {
         if (resourceId.isNullOrBlank()) {
             return defaultResourceId?.let(resourcePackageNames::get) ?: resourcePackageNames.values.firstOrNull()

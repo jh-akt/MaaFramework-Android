@@ -62,6 +62,7 @@ object VirtualDisplayManager {
             Log.i(TAG, "already capturing, displayId=${displayId.get()}")
             return displayId.get()
         }
+        config.set(DisplayConfig(dpi = com.maaframework.android.project.MaaProjectManifestLoader.loadOrDefault(context.assets).virtualDisplayDpi))
         return startInternal(context.applicationContext)
     }
 

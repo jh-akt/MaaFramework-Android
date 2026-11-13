@@ -8,6 +8,15 @@ import org.junit.Test
 class InterfaceCatalogLoaderTest {
     private val loader = InterfaceCatalogLoader()
 
+    @Test fun `preset excludes explicitly disabled tasks`() {
+        val catalog = loader.parseCatalog(
+            """{"preset":[{"name":"daily","task":[{"name":"login"},{"name":"spend","enabled":false},{"name":"finish","enabled":true}]}]}""",
+            null, { error("no imports expected") },
+        )
+        assertEquals(listOf("login", "finish"), catalog.presets.single().taskIds)
+    }
+
+
     @Test
     fun `parseCatalog keeps adb compatible tasks and filters unsupported controllers`() {
         val catalog = loader.parseCatalog(

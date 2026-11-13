@@ -243,13 +243,13 @@ private fun MaaHostHomeScreen(
                 action = MaaHomeAction(
                     title = "同步项目资源",
                     actionLabel = if (state.resourceRepositoryUpdating) "同步中" else "同步",
-                    enabled = !state.resourceRepositoryUpdating,
+                    enabled = state.manifest.hasGitHubResourceRepository() && !state.resourceRepositoryUpdating,
                     onClick = actions.refreshResourceRepository,
                 ),
                 clearAction = MaaHomeAction(
                     title = "清除本地资源",
                     actionLabel = "清除",
-                    enabled = !state.resourceRepositoryUpdating,
+                    enabled = state.manifest.hasGitHubResourceRepository() && !state.resourceRepositoryUpdating,
                     onClick = actions.requestClearResourceRepositoryConfirmation,
                 ),
             ) {
@@ -439,7 +439,7 @@ private fun MaaHostSettingsScreen(
                 MaaHomeInfoRow("服务响应", it)
             }
             MaaHomeDivider()
-            MaaHomeActionRow(MaaHomeAction("同步项目资源", "同步", !state.resourceRepositoryUpdating, onClick = actions.refreshResourceRepository))
+            MaaHomeActionRow(MaaHomeAction("同步项目资源", "同步", state.manifest.hasGitHubResourceRepository() && !state.resourceRepositoryUpdating, onClick = actions.refreshResourceRepository))
             MaaHomeDivider()
             MaaHomeActionRow(MaaHomeAction("导出 Runtime 诊断", "导出", state.rootConnected, onClick = actions.exportDiagnostics))
         }
@@ -536,6 +536,7 @@ private fun MaaHostTab.subtitle(state: MaaHostState, visibleTasks: List<TaskDesc
 
 private fun repositorySummary(state: MaaHostState): String = when {
     state.resourceRepositoryUpdating -> state.resourceRepositoryProgress?.label ?: "正在同步"
+    state.resourceRepository.source == "bundled" && state.resourceRepository.available -> "APK 内置资源（随应用更新）"
     state.resourceRepository.available -> "已就绪"
     !state.resourceRepository.lastError.isNullOrBlank() -> "同步失败"
     else -> "尚未下载"

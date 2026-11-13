@@ -47,3 +47,18 @@ MaaHostApp(
 ```
 
 框架执行模块单测、UI Kotlin 编译、build-logic 构建以及 Runtime Python helper 单测。真机 Root/触控/息屏验证保留为发布前的设备验收，不阻塞普通 CI。
+
+## 通用宿主与 APK 内置项目
+
+新应用可直接使用 `MaaHostViewModel` 和 `viewModel.hostActions()`，不必复制应用层
+ViewModel。它提供任务独立勾选、任务选项、资源/全局默认选项、预设、配置导入导出和
+Root Runtime 操作。需要可编辑共享选项或特殊执行策略的旧宿主仍可保留自己的适配层。
+
+项目资源需要构建期转换或与原生依赖锁定版本时，在 manifest 设置
+`"bundled_resource_path": "project"`，把完整 Android 项目资源放入该 assets 目录。
+此模式与 `github_resource_repository` 互斥，资源随 APK 更新，UI 不提供 GitHub
+同步/清除操作。运行时仍由 Gradle 插件独立打包。准备运行时会替换代码和资源，但不
+删除 `config/` 用户数据；内置项目包不得包含会覆盖用户数据的 `config/`。
+
+`virtual_display_dpi` 可覆盖项目虚拟屏 DPI（默认 160），宽高继续使用框架的
+1280×720。项目包名映射支持 `包名/Activity` 形式。

@@ -27,6 +27,7 @@ object RuntimeBootstrapper {
     private val baseAssetEntries = listOf(
         "interface.json",
         "locales",
+        "i18n",
         "tasks",
         "resource",
         "resource_adb",
@@ -60,11 +61,17 @@ object RuntimeBootstrapper {
             error("GitHub resource repository unavailable: $detail")
         }
 
-        val repoRoot = PersistentProjectRepositoryManager.currentRoot(context, projectManifest)
-        collectRequiredRepoEntries(repoRoot).forEach { entry ->
-            copyFileEntry(File(repoRoot, entry), File(runtimeRoot, entry), logger)
+        val bundledPath = projectManifest.bundledResourcePath
+        if (bundledPath != null) {
+            copyAssetEntry(assets, bundledPath, runtimeRoot, logger)
+            logger.log("Runtime resources prepared from APK assets")
+        } else {
+            val repoRoot = PersistentProjectRepositoryManager.currentRoot(context, projectManifest)
+            collectRequiredRepoEntries(repoRoot).forEach { entry ->
+                copyFileEntry(File(repoRoot, entry), File(runtimeRoot, entry), logger)
+            }
+            logger.log("Runtime resources prepared from persistent GitHub repository")
         }
-        logger.log("Runtime resources prepared from persistent GitHub repository")
 
         if (assetEntryExists(assets, "bundled_runtime")) {
             copyAssetEntry(assets, "bundled_runtime", runtimeRoot, logger)
@@ -250,6 +257,7 @@ object RuntimeBootstrapper {
         val staleEntries = listOf(
             "interface.json",
             "locales",
+            "i18n",
             "tasks",
             "resource",
             "resource_adb",
