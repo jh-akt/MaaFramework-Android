@@ -114,17 +114,28 @@ public final class MaaFrameworkBridge {
     }
 
     public RunResult runTask(String entry, String overrideJson) {
+        return runTask(entry, overrideJson, this, () -> false);
+    }
+
+    public RunResult runTask(String entry, String overrideJson, Object lifecycleLock,
+                             java.util.function.BooleanSupplier stopRequested) {
         if (tasker == null) {
             return new RunResult(false, "tasker not initialized");
         }
         clearEventTrace();
         try {
-            connectAgentIfNeeded();
+            connectAgentIfNeeded(stopRequested);
         } catch (Throwable error) {
             return new RunResult(false, "agent setup failed: " + error.getMessage());
         }
         Log.i(TAG, "runTask start, entry=" + entry + ", override=" + overrideJson);
-        long taskId = library.MaaTaskerPostTask(tasker, entry, overrideJson);
+        long taskId;
+        synchronized (lifecycleLock) {
+            if (stopRequested.getAsBoolean()) {
+                return new RunResult(false, "Run stopped before task submission");
+            }
+            taskId = library.MaaTaskerPostTask(tasker, entry, overrideJson);
+        }
         Log.i(TAG, "task posted, taskId=" + taskId);
         if (taskId <= 0) {
             return new RunResult(false, "task post failed, taskId=" + taskId);
@@ -487,7 +498,8 @@ public final class MaaFrameworkBridge {
         return message.toString();
     }
 
-    private void connectAgentIfNeeded() throws IOException {
+    private void connectAgentIfNeeded(java.util.function.BooleanSupplier stopRequested) throws IOException {
+        if (stopRequested.getAsBoolean()) throw new IOException("Run stopped before agent connection");
         if (agentClient != null && agentClientLibrary != null && agentClientLibrary.MaaAgentClientConnected(agentClient) != 0) {
             return;
         }
@@ -521,11 +533,13 @@ public final class MaaFrameworkBridge {
         }
 
         checkTrue(agentClientLibrary.MaaAgentClientBindResource(agentClient, resource), "bind resource to agent client");
+        if (stopRequested.getAsBoolean()) throw new IOException("Run stopped before agent launch");
         startAgentRuntime(agentRuntime, identifier);
         checkTrue(agentClientLibrary.MaaAgentClientSetTimeout(agentClient, 20_000L), "set agent timeout");
 
         long deadline = System.currentTimeMillis() + 20_000L;
         while (true) {
+            if (stopRequested.getAsBoolean()) throw new IOException("Run stopped during agent connection");
             if (agentClientLibrary.MaaAgentClientConnect(agentClient) != 0) {
                 Log.i(TAG, "agent client connected: " + agentRuntime.getKind());
                 break;

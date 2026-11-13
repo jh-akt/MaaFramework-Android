@@ -5,6 +5,8 @@ import com.maaframework.android.project.GitHubResourceRepositoryConfig
 import com.maaframework.android.project.MaaProjectManifest
 import java.io.BufferedInputStream
 import java.io.File
+import java.io.RandomAccessFile
+import java.net.URLEncoder
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
@@ -49,6 +51,20 @@ object PersistentProjectRepositoryManager {
         context: Context,
         manifest: MaaProjectManifest,
     ): PersistentProjectRepositoryStatus {
+        if (manifest.githubResourceRepository != null) {
+            val root = currentRoot(context, manifest)
+            val previous = File(root.parentFile, "previous")
+            if (!root.exists() && previous.exists()) {
+                return withRepositoryLock(context, manifest) {
+                    RepositoryDirectoryTransaction().recover(root, previous)
+                    loadStatusUnlocked(context, manifest)
+                }
+            }
+        }
+        return loadStatusUnlocked(context, manifest)
+    }
+
+    private fun loadStatusUnlocked(context: Context, manifest: MaaProjectManifest): PersistentProjectRepositoryStatus {
         val config = manifest.githubResourceRepository
             ?: return PersistentProjectRepositoryStatus(
                 available = false,
@@ -103,27 +119,29 @@ object PersistentProjectRepositoryManager {
         context: Context,
         manifest: MaaProjectManifest,
     ): PersistentProjectRepositoryStatus {
-        val config = manifest.githubResourceRepository
-            ?: return PersistentProjectRepositoryStatus(
-                available = false,
-                lastError = "GitHub resource repository is not configured",
-            )
-        return runCatching {
-            val baseDir = sharedBaseDir(context, manifest.projectId)
-            if (baseDir.exists()) {
-                deleteRecursively(baseDir)
+        return withRepositoryLock(context, manifest) {
+            val config = manifest.githubResourceRepository
+                ?: return@withRepositoryLock PersistentProjectRepositoryStatus(
+                    available = false,
+                    lastError = "GitHub resource repository is not configured",
+                )
+            runCatching {
+                val baseDir = sharedBaseDir(context, manifest.projectId)
+                if (baseDir.exists()) {
+                    deleteRecursively(baseDir)
+                }
+                loadStatusUnlocked(context, manifest)
+            }.getOrElse { error ->
+                PersistentProjectRepositoryStatus(
+                    available = false,
+                    source = "github",
+                    owner = config.owner,
+                    repo = config.repo,
+                    branch = config.branch,
+                    rootPath = currentRoot(context, manifest).absolutePath,
+                    lastError = error.message ?: error::class.java.simpleName,
+                )
             }
-            loadStatus(context, manifest)
-        }.getOrElse { error ->
-            PersistentProjectRepositoryStatus(
-                available = false,
-                source = "github",
-                owner = config.owner,
-                repo = config.repo,
-                branch = config.branch,
-                rootPath = currentRoot(context, manifest).absolutePath,
-                lastError = error.message ?: error::class.java.simpleName,
-            )
         }
     }
 
@@ -133,73 +151,70 @@ object PersistentProjectRepositoryManager {
         logger: ((String) -> Unit)? = null,
         progress: ((PersistentProjectRepositorySyncProgress) -> Unit)? = null,
     ): PersistentProjectRepositoryStatus {
-        val config = manifest.githubResourceRepository
-            ?: return PersistentProjectRepositoryStatus(
-                available = false,
-                lastError = "GitHub resource repository is not configured",
-            )
-        val baseDir = sharedBaseDir(context, manifest.projectId).apply { mkdirs() }
-        val currentRoot = currentRoot(context, manifest)
-        val stagingRoot = File(baseDir, "staging-${System.currentTimeMillis()}").apply { mkdirs() }
-        val previousRoot = File(baseDir, "previous")
+        return withRepositoryLock(context, manifest) {
+            val config = manifest.githubResourceRepository
+                ?: return@withRepositoryLock PersistentProjectRepositoryStatus(
+                    available = false,
+                    lastError = "GitHub resource repository is not configured",
+                )
+            val baseDir = sharedBaseDir(context, manifest.projectId).apply { mkdirs() }
+            val currentRoot = currentRoot(context, manifest)
+            RepositoryDirectoryTransaction().recover(currentRoot, File(baseDir, "previous"))
+            val stagingRoot = File(baseDir, "staging-${System.currentTimeMillis()}").apply { mkdirs() }
+            val previousRoot = File(baseDir, "previous")
 
-        return runCatching {
-            reportProgress(progress, 0.04f, "准备同步 GitHub 资源")
-            logger?.invoke("Downloading ${config.owner}/${config.repo} from GitHub")
-            downloadAndExtractMainRepository(
-                config = config,
-                targetRoot = stagingRoot,
-                logger = logger,
-                progress = progress,
-            )
-            config.submodules.forEachIndexed { index, submodule ->
-                downloadAndExtractSubmodule(
-                    parentConfig = config,
-                    submodule = submodule,
-                    targetRoot = File(stagingRoot, normalizeRelativePath(submodule.targetPath)),
-                    offset = 0.52f + (index * 0.18f),
+            runCatching {
+                reportProgress(progress, 0.04f, "准备同步 GitHub 资源")
+                logger?.invoke("Downloading ${config.owner}/${config.repo} from GitHub")
+                val revision = fetchMainRevision(config)
+                val pinnedConfig = config.copy(branch = revision)
+                downloadAndExtractMainRepository(
+                    config = pinnedConfig,
+                    targetRoot = stagingRoot,
                     logger = logger,
                     progress = progress,
                 )
-            }
-            applyCopyMappings(stagingRoot, manifest, logger)
-            check(isRepositoryReady(stagingRoot, config)) {
-                "GitHub resource repository is incomplete after sync"
-            }
+                config.submodules.forEachIndexed { index, submodule ->
+                    downloadAndExtractSubmodule(
+                        parentConfig = pinnedConfig,
+                        submodule = submodule,
+                        targetRoot = File(stagingRoot, normalizeRelativePath(submodule.targetPath)),
+                        offset = 0.52f + (index * 0.18f),
+                        logger = logger,
+                        progress = progress,
+                    )
+                }
+                applyCopyMappings(stagingRoot, manifest, logger)
+                check(isRepositoryReady(stagingRoot, config)) {
+                    "GitHub resource repository is incomplete after sync"
+                }
 
-            reportProgress(progress, 0.94f, "正在写入本地缓存")
-            val status = PersistentProjectRepositoryStatus(
-                available = true,
-                source = "github",
-                owner = config.owner,
-                repo = config.repo,
-                branch = config.branch,
-                mainRevision = config.branch,
-                updatedAt = System.currentTimeMillis(),
-                rootPath = currentRoot.absolutePath,
-            )
-            writeMetadata(stagingRoot, status)
+                reportProgress(progress, 0.94f, "正在写入本地缓存")
+                val status = PersistentProjectRepositoryStatus(
+                    available = true,
+                    source = "github",
+                    owner = config.owner,
+                    repo = config.repo,
+                    branch = config.branch,
+                    mainRevision = revision,
+                    updatedAt = System.currentTimeMillis(),
+                    rootPath = currentRoot.absolutePath,
+                )
+                writeMetadata(stagingRoot, status)
 
-            if (previousRoot.exists()) {
-                deleteRecursively(previousRoot)
-            }
-            if (currentRoot.exists()) {
-                currentRoot.renameTo(previousRoot)
-            }
-            if (!stagingRoot.renameTo(currentRoot)) {
-                copyDirectoryContents(stagingRoot, currentRoot)
-                deleteRecursively(stagingRoot)
-            }
-            deleteRecursively(previousRoot)
+                RepositoryDirectoryTransaction().publish(stagingRoot, currentRoot, previousRoot)
 
-            reportProgress(progress, 1f, "GitHub 资源同步完成")
-            logger?.invoke("Persistent GitHub resource repository updated")
-            loadStatus(context, manifest)
-        }.getOrElse { error ->
-            val message = error.message ?: error::class.java.simpleName
-            logger?.invoke("GitHub resource repository update failed: $message")
-            deleteRecursively(stagingRoot)
-            loadStatus(context, manifest).copy(lastError = message)
+                reportProgress(progress, 1f, "GitHub 资源同步完成")
+                logger?.invoke("Persistent GitHub resource repository updated")
+                loadStatusUnlocked(context, manifest)
+            }.getOrElse { error ->
+                val message = error.message ?: error::class.java.simpleName
+                logger?.invoke("GitHub resource repository update failed: $message")
+                runCatching { deleteRecursively(stagingRoot) }.onFailure(error::addSuppressed)
+                runCatching { RepositoryDirectoryTransaction().recover(currentRoot, previousRoot) }
+                    .onFailure(error::addSuppressed)
+                loadStatusUnlocked(context, manifest).copy(lastError = message)
+            }
         }
     }
 
@@ -226,7 +241,7 @@ object PersistentProjectRepositoryManager {
     ) {
         reportProgress(progress, 0.10f, "正在下载 GitHub 主资源")
         val zipFile = downloadToTempFile(
-            url = repoZipUrl(config.owner, config.repo, config.branch),
+            url = repoRevisionZipUrl(config.owner, config.repo, config.branch),
             prefix = "maafw-main",
             logger = logger,
             onProgress = { fraction ->
@@ -290,14 +305,18 @@ object PersistentProjectRepositoryManager {
     ): GitSubmoduleInfo {
         logger?.invoke("Resolving submodule ${submodule.apiPath} from GitHub API")
         val connection = openConnection(submoduleApiUrl(parentConfig.owner, parentConfig.repo, submodule.apiPath, parentConfig.branch))
-        connection.inputStream.bufferedReader().use { reader ->
-            val root = json.parseToJsonElement(reader.readText()).jsonObject
-            val revision = root["sha"]?.jsonPrimitive?.content
-                ?: error("Missing submodule revision for ${submodule.apiPath}")
-            val gitUrl = root["submodule_git_url"]?.jsonPrimitive?.content
-                ?: submodule.fallbackGitUrl
-                ?: error("Missing submodule Git URL for ${submodule.apiPath}")
-            return GitSubmoduleInfo.fromUrl(gitUrl, revision)
+        try {
+            connection.inputStream.bufferedReader().use { reader ->
+                val root = json.parseToJsonElement(reader.readText()).jsonObject
+                val revision = root["sha"]?.jsonPrimitive?.content
+                    ?: error("Missing submodule revision for ${submodule.apiPath}")
+                val gitUrl = root["submodule_git_url"]?.jsonPrimitive?.content
+                    ?: submodule.fallbackGitUrl
+                    ?: error("Missing submodule Git URL for ${submodule.apiPath}")
+                return GitSubmoduleInfo.fromUrl(gitUrl, revision)
+            }
+        } finally {
+            connection.disconnect()
         }
     }
 
@@ -498,11 +517,31 @@ object PersistentProjectRepositoryManager {
             .removePrefix("./")
             .removePrefix("/")
             .trim()
+        require(normalized.split('/').none { it == ".." }) { "Resource path escapes repository: $path" }
         return if (normalized == ".") "" else normalized
     }
 
-    private fun repoZipUrl(owner: String, repo: String, branch: String): String {
-        return "https://codeload.github.com/$owner/$repo/zip/refs/heads/$branch"
+    private fun fetchMainRevision(config: GitHubResourceRepositoryConfig): String {
+        val ref = URLEncoder.encode(config.branch, "UTF-8")
+        val connection = openConnection("https://api.github.com/repos/${config.owner}/${config.repo}/commits/$ref")
+        try {
+            val revision = connection.inputStream.bufferedReader().use { reader ->
+                json.parseToJsonElement(reader.readText()).jsonObject["sha"]?.jsonPrimitive?.content
+            }
+            check(revision != null && revision.matches(Regex("[0-9a-fA-F]{40}"))) { "Missing repository commit SHA" }
+            return revision
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    @Synchronized
+    private fun <T> withRepositoryLock(context: Context, manifest: MaaProjectManifest, action: () -> T): T {
+        val base = sharedBaseDir(context, manifest.projectId)
+        check(base.parentFile!!.isDirectory || base.parentFile!!.mkdirs()) { "Cannot create repository parent" }
+        RandomAccessFile(File(base.parentFile, "${base.name}.lock"), "rw").use { file ->
+            file.channel.lock().use { return action() }
+        }
     }
 
     private fun submoduleApiUrl(owner: String, repo: String, apiPath: String, branch: String): String {

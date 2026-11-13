@@ -25,7 +25,6 @@ import com.maaframework.android.runtime.RuntimeBootstrapper
 import com.maaframework.android.runtime.RuntimeLogger
 import java.io.File
 import java.util.concurrent.Executors
-import java.util.concurrent.Future
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.system.exitProcess
@@ -51,11 +50,7 @@ class RootRuntimeService(
     @Volatile
     private var logger: RuntimeLogger? = null
 
-    @Volatile
-    private var currentFuture: Future<*>? = null
-
-    @Volatile
-    private var stopRequested = false
+    private val operationGate = RuntimeOperationGate()
 
     @Volatile
     private var maaBridge: MaaFrameworkBridge? = null
@@ -86,7 +81,18 @@ class RootRuntimeService(
     }
 
     override fun prepareRuntime(): Boolean {
-        updateSnapshot { it.copy(phase = RunSessionPhase.Preparing, lastMessage = "Preparing runtime") }
+        val operation = operationGate.acquire() ?: return false
+        try {
+            return prepareRuntimeInternal(operation) && !operation.stopRequested
+        } finally {
+            operationGate.finish(operation) {
+                if (operation.stopRequested) completeRun(null, "Preparation stopped", RunSessionPhase.Idle)
+            }
+        }
+    }
+
+    private fun prepareRuntimeInternal(operation: RuntimeOperationGate.Operation): Boolean {
+        updateSnapshot { it.copy(phase = RunSessionPhase.Preparing, runtimePrepared = false, lastMessage = "Preparing runtime") }
         return runCatching {
             val root = runtimeRootDirectory()
             val runtimeLogger = RuntimeLogger(root)
@@ -95,7 +101,7 @@ class RootRuntimeService(
             runtimeRoot = result.runtimeRoot
             updateSnapshot {
                 it.copy(
-                    phase = RunSessionPhase.Idle,
+                    phase = if (operation.stopRequested) RunSessionPhase.Stopping else RunSessionPhase.Idle,
                     runtimePrepared = true,
                     runtimeRoot = result.runtimeRoot.absolutePath,
                     displayPowerOffActive = DisplayPowerController.isDisplayPowerOffActive(),
@@ -112,17 +118,30 @@ class RootRuntimeService(
     }
 
     override fun startRun(runRequestJson: String): Boolean {
+        val operation = operationGate.acquire() ?: return false
+        var submitted = false
+        try {
+            updateSnapshot { it.copy(phase = RunSessionPhase.Preparing, lastMessage = "Starting run") }
+            submitted = startRunOwned(runRequestJson, operation)
+            return submitted
+        } catch (error: Throwable) {
+            failRun(null, "Run start failed: ${error.message}")
+            return false
+        } finally {
+            if (!submitted) operationGate.finish(operation) {
+                if (operation.stopRequested) completeRun(null, "Run stopped", RunSessionPhase.Idle)
+            }
+        }
+    }
+
+    private fun startRunOwned(runRequestJson: String, operation: RuntimeOperationGate.Operation): Boolean {
         val request = runCatching { json.decodeFromString<RunRequest>(runRequestJson) }
             .getOrElse { error ->
                 failRun(taskId = null, message = "Invalid run request: ${error.message}")
                 return false
             }
 
-        if (snapshot.phase == RunSessionPhase.Running || snapshot.phase == RunSessionPhase.Preparing) {
-            return false
-        }
-
-        if (!snapshot.runtimePrepared && !prepareRuntime()) {
+        if (!snapshot.runtimePrepared && !prepareRuntimeInternal(operation)) {
             failRun(taskId = request.taskId, message = "Runtime prepare failed before run")
             return false
         }
@@ -149,11 +168,13 @@ class RootRuntimeService(
             return false
         }
 
-        stopRequested = false
-        currentFuture = executor.submit {
+        if (operation.stopRequested) return false
+        executor.submit {
             val runLabel = request.taskId ?: request.presetId ?: "sequence"
-            val priorityState = elevateTaskExecutionThreadPriority(runLabel)
+            var priorityState: TaskExecutionThreadPriorityState? = null
             try {
+                priorityState = elevateTaskExecutionThreadPriority(runLabel)
+                if (operation.stopRequested) return@submit
                 log("Run started: ${request.taskId ?: request.presetId ?: taskIds.joinToString(",")}")
                 if (!prepareVirtualDisplayForRun(resource)) {
                     failRun(
@@ -163,29 +184,35 @@ class RootRuntimeService(
                     return@submit
                 }
                 for (taskId in taskIds) {
-                    if (stopRequested) {
-                        completeRun(taskId, "Run stopped by user", RunSessionPhase.Completed)
+                    if (operation.stopRequested) {
                         return@submit
                     }
-                    if (!runSingleTask(taskId, request.optionOverridesByTask[taskId], resource, request.logLevel)) {
+                    if (!runSingleTask(taskId, request.optionOverridesByTask[taskId], resource, request.logLevel, operation)) {
                         return@submit
                     }
                 }
-                completeRun(taskIds.last(), "Run completed", RunSessionPhase.Completed)
+                if (!operation.stopRequested) completeRun(taskIds.last(), "Run completed", RunSessionPhase.Completed)
+            } catch (error: Throwable) {
+                if (!operation.stopRequested) failRun(null, "Run failed: ${error.message}")
             } finally {
-                restoreTaskExecutionThreadPriority(runLabel, priorityState)
+                try {
+                    priorityState?.let { restoreTaskExecutionThreadPriority(runLabel, it) }
+                } finally {
+                    operationGate.finish(operation) {
+                        if (operation.stopRequested) completeRun(null, "Run stopped", RunSessionPhase.Idle)
+                    }
+                }
             }
         }
         return true
     }
 
     override fun stopRun() {
-        stopRequested = true
-        maaBridge?.stop()
-        ensureDisplayPowerOn("Run stopping, restoring screen power")
-        updateSnapshot { it.copy(phase = RunSessionPhase.Stopping, lastMessage = "Stop requested") }
-        currentFuture?.cancel(true)
-        updateSnapshot { it.copy(phase = RunSessionPhase.Idle, currentTaskId = null, lastMessage = "Run stopped") }
+        operationGate.requestStop {
+            updateSnapshot { it.copy(phase = RunSessionPhase.Stopping, lastMessage = "Stop requested") }
+            maaBridge?.stop()
+            ensureDisplayPowerOn("Run stopping, restoring screen power")
+        }
     }
 
     override fun setMonitorSurface(surface: Surface?) {
@@ -291,14 +318,21 @@ class RootRuntimeService(
     }
 
     override fun destroy() {
-        stopRequested = true
-        DisplayPowerController.destroy(::log)
-        VirtualDisplayManager.stop()
-        maaBridge?.destroy()
-        maaBridge = null
-        currentFuture?.cancel(true)
-        executor.shutdownNow()
-        exitProcess(0)
+        operationGate.close {
+            maaBridge?.stop()
+            ensureDisplayPowerOn("Runtime shutting down, restoring screen power")
+        }
+        executor.execute {
+            try {
+                maaBridge?.destroy()
+                maaBridge = null
+                DisplayPowerController.destroy(::log)
+                VirtualDisplayManager.stop()
+            } finally {
+                exitProcess(0)
+            }
+        }
+        executor.shutdown()
     }
 
     private fun runSingleTask(
@@ -306,6 +340,7 @@ class RootRuntimeService(
         optionOverrideJson: String?,
         resource: ResourceDescriptor,
         logLevel: String,
+        operation: RuntimeOperationGate.Operation,
     ): Boolean {
         updateSnapshot {
             it.copy(
@@ -323,8 +358,15 @@ class RootRuntimeService(
         }
 
         return runCatching {
-            val bridge = MaaFrameworkBridge().also {
-                it.init(
+            val previousBridge = synchronized(operationGate) {
+                if (operation.stopRequested) return false
+                maaBridge.also { maaBridge = null }
+            }
+            previousBridge?.destroy()
+            if (operation.stopRequested) return false
+            val bridge = MaaFrameworkBridge()
+            try {
+                bridge.init(
                     context,
                     runtimeRoot ?: runtimeRootDirectory(),
                     resource.id,
@@ -333,18 +375,29 @@ class RootRuntimeService(
                     projectManifest.attachResourcePaths,
                     logLevel,
                 )
+            } catch (error: Throwable) {
+                bridge.destroy()
+                throw error
             }
-            maaBridge?.destroy()
-            maaBridge = bridge
+            val published = synchronized(operationGate) {
+                if (operation.stopRequested) false else {
+                    maaBridge = bridge
+                    true
+                }
+            }
+            if (!published) {
+                bridge.destroy()
+                return false
+            }
             log("Loaded MaaFramework ${bridge.version()}")
 
             val overrideJson = mergeOverrideJson("{}", optionOverrideJson)
-            val result = bridge.runTask(entry, overrideJson)
+            val result = bridge.runTask(entry, overrideJson, operationGate) { operation.stopRequested }
             log("Task result: success=${result.success}, message=${result.message}")
             check(result.success) { result.message.ifBlank { "Task execution failed" } }
             true
         }.getOrElse { error ->
-            failRun(taskId, error.message ?: "Task execution failed")
+            if (!operation.stopRequested) failRun(taskId, error.message ?: "Task execution failed")
             false
         }
     }
@@ -533,7 +586,9 @@ class RootRuntimeService(
 
     private fun updateSnapshot(transform: (RuntimeStateSnapshot) -> RuntimeStateSnapshot) {
         synchronized(stateLock) {
-            snapshot = transform(snapshot).copy(
+            val updated = transform(snapshot)
+            snapshot = updated.copy(
+                phase = if (operationGate.isStopping) RunSessionPhase.Stopping else updated.phase,
                 displayPowerOffActive = DisplayPowerController.isDisplayPowerOffActive(),
             )
         }
