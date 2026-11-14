@@ -29,3 +29,7 @@ find_library(glesv2-lib GLESv2)
 
 target_link_libraries(rootlauncher ${log-lib})
 target_link_libraries(bridge ${log-lib} ${jnigraphics-lib} ${android-lib} ${mediandk-lib} ${egl-lib} ${glesv2-lib})
+
+# r27 needs both LOAD and RELRO layout to remain safe on 16 KB page-size devices.
+target_link_options(rootlauncher PRIVATE "-Wl,-z,max-page-size=16384" "-Wl,-z,common-page-size=16384")
+target_link_options(bridge PRIVATE "-Wl,-z,max-page-size=16384" "-Wl,-z,common-page-size=16384")
