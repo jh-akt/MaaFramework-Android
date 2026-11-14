@@ -22,7 +22,7 @@
 
 验证：框架 53 项、公共宿主 7 项、Fgo 2 项、MaaEnd 1 项单元测试通过；四应用编译通过，Fgo 完整 APK 打包与 payload 检查通过。Android 17 / 4 KB 页手机已验证安装启动、Root 授权、Runtime 连接、首次准备、重复准备缓存和息屏恢复。二次准备后 interface 与 identity 文件的 inode/mtime/大小均未改变，日志不再出现解包。
 
-设备验收额外发现 16 KB 构建问题：自编译 bridge/launcher 增加 LOAD 与 RELRO 链接对齐；公共 UI 显式依赖 graphics-path 1.1.0，替换 1.0.1 中跨 RELRO 尾页的可写数据布局。依据 [Android 页大小检查说明](https://developer.android.com/guide/practices/page-sizes) 与 [Graphics 发布记录](https://developer.android.com/jetpack/androidx/releases/graphics)，用实际 ELF 验证，不通过隐藏系统提示规避。
+设备验收额外发现 16 KB 构建问题：自编译 bridge/launcher 增加 LOAD 与 RELRO 链接对齐；公共 UI 显式依赖 graphics-path 1.1.0，替换 1.0.1 中跨 RELRO 尾页的可写数据布局。公共打包插件对 fastdeploy/OpenCV 的预编译 ELF 禁用二次 strip，保留其额外 LOAD 段的 offset/vaddr 对齐；只检查 p_align 不足以发现这一问题。依据 [Android 页大小检查说明](https://developer.android.com/guide/practices/page-sizes) 与 [Graphics 发布记录](https://developer.android.com/jetpack/androidx/releases/graphics)，用实际 ELF 验证，不通过隐藏系统提示规避。
 
 尚未验证：真正的 16 KB 设备、实机战斗、运行中停止、触控压力与卡死进程故障注入。下文行号对应初始审查基线，实施后已经变化。
 

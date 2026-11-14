@@ -133,6 +133,9 @@ private fun Project.configureRuntimeBundling(extension: MaaRuntimeExtension) {
     }
 
     extensions.configure<ApplicationExtension> {
+        // These upstream ELF files have additional LOAD segments. NDK strip rewrites their
+        // offsets without preserving virtual-address congruence; package the originals.
+        packaging.jniLibs.keepDebugSymbols += setOf("**/libfastdeploy_ppocr.so", "**/libopencv_world4.so")
         sourceSets.getByName("main").assets.srcDir(generatedAssetsDir)
         sourceSets.getByName("main").jniLibs.srcDir(generatedJniLibsDir)
     }
