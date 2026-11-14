@@ -133,6 +133,9 @@ private fun Project.configureRuntimeBundling(extension: MaaRuntimeExtension) {
     }
 
     extensions.configure<ApplicationExtension> {
+        // AAPT's default <dir>_* filter drops Python packages such as numpy._core
+        // and numpy._utils. Keep those directories while excluding hidden/VCS files.
+        androidResources.ignoreAssetsPattern = "!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~"
         // These upstream ELF files have additional LOAD segments. NDK strip rewrites their
         // offsets without preserving virtual-address congruence; package the originals.
         packaging.jniLibs.keepDebugSymbols += setOf("**/libfastdeploy_ppocr.so", "**/libopencv_world4.so")

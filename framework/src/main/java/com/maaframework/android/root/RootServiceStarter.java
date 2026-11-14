@@ -7,6 +7,9 @@ import android.util.Log;
 public final class RootServiceStarter {
 
     private static final String TAG = "RootServiceStarter";
+    // Keep the BinderProxy alive for the lifetime of this process. A local reference
+    // can be collected after sendBinder returns, dropping the death registration.
+    private static IBinder appLifecycleBinder;
 
     private RootServiceStarter() {
     }
@@ -54,6 +57,7 @@ public final class RootServiceStarter {
                 watchdog.start();
                 destroyService(createdService.service());
             }, 0);
+            appLifecycleBinder = lifecycleBinder;
             return true;
         } catch (Throwable tr) {
             Log.e(TAG, "Failed to link app lifecycle binder", tr);

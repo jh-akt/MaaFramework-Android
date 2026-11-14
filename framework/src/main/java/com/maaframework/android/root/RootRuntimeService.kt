@@ -241,7 +241,7 @@ class RootRuntimeService(
 
     override fun startWindowedGame(resourceId: String?): Boolean = submitOperation("Opening game") { operation ->
         operation.checkActive()
-        val launched = launchResourceOnVirtualDisplay(resourceId, true, true, false)
+        val launched = launchResourceOnVirtualDisplay(resourceId, true, false, false)
         completeRun(null, if (launched) "Windowed game launched" else "Windowed game launch failed",
             if (launched) RunSessionPhase.Idle else RunSessionPhase.Failed)
     }
@@ -449,7 +449,9 @@ class RootRuntimeService(
         val ready = launchResourceOnVirtualDisplay(
             resourceId = resource.id,
             requirePackage = false,
-            forceStop = true,
+            // Tasks may require the map/formation prepared in the preview. Starting
+            // another run must not force-stop that game session back to its title.
+            forceStop = false,
             excludeFromRecents = true,
         )
         if (ready) {
