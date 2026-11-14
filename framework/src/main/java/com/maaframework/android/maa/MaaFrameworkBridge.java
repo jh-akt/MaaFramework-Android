@@ -42,6 +42,7 @@ public final class MaaFrameworkBridge {
     private Pointer controller;
     private Pointer resource;
     private Pointer tasker;
+    private long stopTaskId;
     private Pointer agentClient;
     private Process agentProcess;
     private File runtimeRootDir;
@@ -159,19 +160,31 @@ public final class MaaFrameworkBridge {
         return new RunResult(ok, message);
     }
 
-    public void stop() {
-        if (tasker != null) {
-            library.MaaTaskerPostStop(tasker);
+    public synchronized void stop() {
+        if (tasker != null && stopTaskId <= 0) {
+            stopTaskId = library.MaaTaskerPostStop(tasker);
         }
     }
 
     public void destroy() {
+        // PostStop invalidates the running task's wait before its custom action exits.
+        // Its own queued task is the barrier: keep the Agent and context alive until
+        // that task finishes, otherwise an in-flight recognition can use freed state.
+        stop();
+        final long stopId;
+        synchronized (this) {
+            stopId = stopTaskId;
+        }
+        if (tasker != null && stopId > 0) {
+            library.MaaTaskerWait(tasker, stopId);
+        }
         disconnectAgent();
         detachTaskerSinks();
         detachControllerSink();
         if (tasker != null) {
             library.MaaTaskerDestroy(tasker);
             tasker = null;
+            stopTaskId = 0;
         }
         if (controller != null) {
             library.MaaControllerDestroy(controller);
