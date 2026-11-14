@@ -8,6 +8,23 @@ import org.junit.Test
 class InterfaceCatalogLoaderTest {
     private val loader = InterfaceCatalogLoader()
 
+    @Test
+    fun `desktop resource-only tasks are retained after adb tasks even without task controller refs`() {
+        val catalog = loader.parseCatalog(
+            interfaceText = """{
+                "controller":[{"name":"PC","type":"Win32"},{"name":"Phone","type":"Adb"}],
+                "resource":[{"name":"desktop","controller":["PC"]},{"name":"android","controller":["Phone"]}],
+                "task":[{"name":"Desktop","entry":"PC","resource":["desktop"]},
+                    {"name":"Phone","entry":"Adb","controller":["Phone"]},
+                    {"name":"Shared","entry":"Shared"}]
+            }""",
+            localeText = "{}", importResolver = { error("unexpected import") },
+        )
+        assertEquals(listOf("Phone", "Shared", "Desktop"), catalog.tasks.map { it.id })
+        assertFalse(catalog.tasks.last().controllerSupported)
+        assertTrue(catalog.tasks.take(2).all { it.controllerSupported })
+    }
+
     @Test fun `preset excludes explicitly disabled tasks`() {
         val catalog = loader.parseCatalog(
             """{"preset":[{"name":"daily","task":[{"name":"login"},{"name":"spend","enabled":false},{"name":"finish","enabled":true}]}]}""",
@@ -18,7 +35,7 @@ class InterfaceCatalogLoaderTest {
 
 
     @Test
-    fun `parseCatalog keeps adb compatible tasks and filters unsupported controllers`() {
+    fun `parseCatalog preserves unsupported tasks with explicit compatibility`() {
         val catalog = loader.parseCatalog(
             interfaceText = """
                 {
@@ -64,10 +81,11 @@ class InterfaceCatalogLoaderTest {
         )
 
         assertEquals(
-            listOf("CustomTask", "AdbTask", "AliasTask"),
+            listOf("CustomTask", "AdbTask", "AliasTask", "DesktopOnlyTask"),
             catalog.tasks.map { it.id },
         )
-        assertFalse(catalog.tasks.any { it.id == "DesktopOnlyTask" })
+        assertFalse(catalog.tasks.last().controllerSupported)
+        assertTrue(catalog.tasks.take(3).all { it.controllerSupported })
     }
 
     @Test

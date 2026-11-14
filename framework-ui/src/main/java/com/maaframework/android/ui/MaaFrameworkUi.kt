@@ -953,7 +953,8 @@ fun MaaTaskListPanel(
     emptyDescription: String = "目录加载完成后，任务会显示在这里。",
 ) {
     val (pinnedTasks, otherTasks) = remember(tasks, pinnedTaskIds) {
-        tasks.partition { it.id in pinnedTaskIds }
+        val ordered = com.maaframework.android.catalog.TaskOptionSupport.orderTasks(tasks, pinnedTaskIds)
+        ordered.partition { it.controllerSupported && it.id in pinnedTaskIds }
     }
     Column(
         modifier = modifier
@@ -1049,6 +1050,11 @@ fun MaaTaskDetailPanel(
             MaaEmptyStateBlock(
                 title = emptyTitle,
                 description = emptyDescription,
+            )
+        } else if (!task.controllerSupported) {
+            MaaEmptyStateBlock(
+                title = "不支持 ADB",
+                description = "此任务的控制器声明不支持 Android，保留供查看，不能勾选或执行。",
             )
         } else if (options.isEmpty()) {
             MaaEmptyStateBlock(
@@ -1505,11 +1511,12 @@ private fun MaaTaskListItem(
                     modifier = Modifier
                         .width(32.dp)
                         .height(21.dp)
-                        .clickable { onCheckedChange(!(checked || running)) },
+                        .clickable(enabled = task.controllerSupported) { onCheckedChange(!(checked || running)) },
                     contentAlignment = Alignment.CenterStart,
                 ) {
                     Checkbox(
-                        checked = checked || running,
+                        checked = task.controllerSupported && (checked || running),
+                        enabled = task.controllerSupported,
                         onCheckedChange = null,
                         modifier = Modifier
                             .size(16.dp)
@@ -1520,15 +1527,18 @@ private fun MaaTaskListItem(
                     )
                 }
             }
-            Text(
-                text = label,
-                style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 21.sp),
-                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
-                fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.bodyMedium.copy(fontSize = 15.sp, lineHeight = 21.sp),
+                    color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface,
+                    fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (!task.controllerSupported) Text("不支持 ADB", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error)
+            }
         }
     }
 }

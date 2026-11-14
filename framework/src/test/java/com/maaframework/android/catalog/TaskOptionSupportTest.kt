@@ -106,6 +106,26 @@ class TaskOptionSupportTest {
         assertTrue(TaskOptionSupport.taskSupportsResource(task, null))
     }
 
+    @Test
+    fun compatibilityComesBeforePinsAndPreservesOrderWithinEachGroup() {
+        fun task(id: String, supported: Boolean = true) = TaskDescriptor(id, id, "", entry = id,
+            groups = emptyList(), controllers = emptyList(), controllerSupported = supported)
+        val tasks = listOf(task("pc", false), task("adb1"), task("adb2"), task("pc2", false), task("pinned"))
+        assertEquals(listOf("pinned", "adb1", "adb2", "pc", "pc2"),
+            TaskOptionSupport.orderTasks(tasks, linkedSetOf("pc", "pinned")).map { it.id })
+        assertEquals(listOf("adb1", "adb2", "pinned", "pc", "pc2"),
+            TaskOptionSupport.orderTasks(tasks).map { it.id })
+        assertTrue(TaskOptionSupport.unsupportedTaskMessage(tasks)!!.contains("pc"))
+    }
+
+    @Test
+    fun unsupportedTasksRemainVisibleEvenForDesktopOnlyResources() {
+        val desktop = TaskDescriptor("pc", "PC", "", entry = "PC", groups = emptyList(),
+            controllers = listOf("Win32"), supportedResources = listOf("desktop"), controllerSupported = false)
+        val android = desktop.copy(id = "adb", controllerSupported = true, supportedResources = listOf("cn"))
+        assertEquals(listOf("adb", "pc"), TaskOptionSupport.visibleTasks(listOf(desktop, android), "cn").map { it.id })
+    }
+
     private fun option(
         id: String,
         type: TaskOptionType = TaskOptionType.Switch,

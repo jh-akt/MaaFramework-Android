@@ -92,7 +92,7 @@ open class MaaHostViewModel @JvmOverloads constructor(
             ?.takeIf { taskId -> visibleTasks.any { it.id == taskId } }
             ?: visibleTasks.firstOrNull()?.id
         val checkedTaskIds = _uiState.value.checkedTaskIds
-            .filterTo(linkedSetOf()) { taskId -> visibleTasks.any { it.id == taskId } }
+            .filterTo(linkedSetOf()) { taskId -> visibleTasks.any { it.id == taskId && it.controllerSupported } }
         _uiState.update { current -> current.copy(
             selectedResourceId = resourceId,
             selectedTaskId = selectedTaskId,
@@ -113,6 +113,7 @@ open class MaaHostViewModel @JvmOverloads constructor(
     }
 
     fun toggleTaskChecked(taskId: String, checked: Boolean) {
+        if (checked && _uiState.value.catalog.tasks.any { it.id == taskId && !it.controllerSupported }) return
         val updated = _uiState.value.checkedTaskIds.toMutableSet().apply {
             if (checked) {
                 add(taskId)
@@ -651,7 +652,7 @@ open class MaaHostViewModel @JvmOverloads constructor(
             ?: visibleTasks.firstOrNull()?.id
         val checkedTaskIds = state.checkedTaskIds
             .ifEmpty { storedSettings.checkedTaskIds }
-            .filterTo(linkedSetOf()) { taskId -> visibleTasks.any { it.id == taskId } }
+            .filterTo(linkedSetOf()) { taskId -> visibleTasks.any { it.id == taskId && it.controllerSupported } }
             .ifEmpty {
                 defaultCheckedTaskIds(visibleTasks, selectedTaskId)
             }
@@ -694,7 +695,7 @@ open class MaaHostViewModel @JvmOverloads constructor(
             ?: manifest.defaultTaskId?.takeIf { taskId -> visibleTasks.any { it.id == taskId } }
             ?: visibleTasks.firstOrNull()?.id
         val checkedTaskIds = settings.checkedTaskIds
-            .filterTo(linkedSetOf()) { taskId -> visibleTasks.any { it.id == taskId } }
+            .filterTo(linkedSetOf()) { taskId -> visibleTasks.any { it.id == taskId && it.controllerSupported } }
             .ifEmpty { defaultCheckedTaskIds(visibleTasks, selectedTaskId) }
         val taskOptionSelectionsByTask = mergeTaskOptionSelections(catalog.tasks, settings.taskOptionSelectionsByTask)
         val taskInputValuesByTask = mergeTaskInputValues(catalog.tasks, settings.taskInputValuesByTask)
@@ -763,6 +764,7 @@ open class MaaHostViewModel @JvmOverloads constructor(
     }
 
     private fun validateTaskOptionSelections(tasks: List<TaskDescriptor>, resourceId: String?): String? {
+        TaskOptionSupport.unsupportedTaskMessage(tasks)?.let { return it }
         tasks.forEach { task ->
             val errors = TaskOptionSupport.collectInputValidationErrors(
                 options = TaskOptionSupport.filterOptionsForResource(task.options, resourceId),
@@ -880,7 +882,7 @@ open class MaaHostViewModel @JvmOverloads constructor(
                 ?.takeIf { taskId -> visibleTasks.any { it.id == taskId } }
             ?: visibleTasks.firstOrNull()?.id
         val checkedTaskIds = settings.checkedTaskIds
-            .filterTo(linkedSetOf()) { taskId -> visibleTasks.any { it.id == taskId } }
+            .filterTo(linkedSetOf()) { taskId -> visibleTasks.any { it.id == taskId && it.controllerSupported } }
             .ifEmpty { defaultCheckedTaskIds(visibleTasks, selectedTaskId) }
         val selectedPresetId = settings.selectedPresetId
             ?.takeIf { presetId -> state.catalog.presets.any { it.id == presetId } }
@@ -971,16 +973,14 @@ open class MaaHostViewModel @JvmOverloads constructor(
         private const val MAX_LOG_LINES = 300
 
         fun visibleTasks(tasks: List<TaskDescriptor>, resourceId: String?): List<TaskDescriptor> {
-            return tasks.filter { task ->
-                TaskOptionSupport.taskSupportsResource(task, resourceId)
-            }
+            return TaskOptionSupport.visibleTasks(tasks, resourceId)
         }
 
         fun defaultCheckedTaskIds(tasks: List<TaskDescriptor>, selectedTaskId: String?): Set<String> {
             return tasks
-                .filter { it.defaultChecked }
+                .filter { it.defaultChecked && it.controllerSupported }
                 .mapTo(linkedSetOf()) { it.id }
-                .ifEmpty { setOfNotNull(selectedTaskId) }
+                .ifEmpty { setOfNotNull(selectedTaskId?.takeIf { id -> tasks.any { it.id == id && it.controllerSupported } }) }
         }
     }
 

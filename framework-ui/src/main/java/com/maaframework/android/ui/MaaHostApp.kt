@@ -366,7 +366,7 @@ private fun MaaHostTasksScreen(
             ) {
                 Button(
                     onClick = actions.startSelectedTask,
-                    enabled = state.rootConnected && !state.busy && tasks.isNotEmpty() && errors.isEmpty(),
+                    enabled = state.rootConnected && !state.busy && tasks.any { it.controllerSupported } && errors.isEmpty(),
                 ) { Text("运行已勾选任务") }
                 OutlinedButton(
                     onClick = actions.stopRun,

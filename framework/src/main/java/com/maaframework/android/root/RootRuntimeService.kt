@@ -176,6 +176,13 @@ class RootRuntimeService(
             return false
         }
 
+        val tasks = loadCatalogSnapshot().tasks
+        val invalid = taskIds.firstOrNull { id -> tasks.none { it.id == id && it.controllerSupported } }
+        if (invalid != null) {
+            failRun(invalid, "Task is missing or does not support the Android controller: $invalid")
+            return false
+        }
+
         val resource = resolveResourceDescriptor(request.resourceName)
         if (resource == null) {
             failRun(taskId = request.taskId ?: taskIds.firstOrNull(), message = "Resource not found for ${request.resourceName}")

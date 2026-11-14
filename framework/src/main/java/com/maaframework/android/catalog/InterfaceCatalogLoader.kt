@@ -101,9 +101,16 @@ class InterfaceCatalogLoader(
         val resources = resourceObjects.mapNotNull { resource ->
             parseResource(resource, localeMap, optionRoot, controllerAliases)
         }
-        val tasks = taskObjects.mapNotNull { task ->
-            parseTask(task, localeMap, optionRoot, controllerAliases)
-        }
+        val unsupportedResources = resourceObjects.filter {
+            !supportsControllers(stringArray(it["controller"]), controllerAliases)
+        }.mapNotNull { it["name"].primitiveContent() }.toSet()
+        val tasks = TaskOptionSupport.orderTasks(taskObjects.mapNotNull { task ->
+            parseTask(task, localeMap, optionRoot, controllerAliases)?.let { parsed ->
+                val desktopResourceOnly = parsed.supportedResources.isNotEmpty() &&
+                    parsed.supportedResources.all { it in unsupportedResources }
+                parsed.copy(controllerSupported = parsed.controllerSupported && !desktopResourceOnly)
+            }
+        })
         val presets = presetObjects.mapNotNull { preset ->
             parsePreset(preset, localeMap)
         }
@@ -139,9 +146,6 @@ class InterfaceCatalogLoader(
     ): TaskDescriptor? {
         val id = obj["name"].primitiveContent() ?: return null
         val controllers = stringArray(obj["controller"])
-        if (!supportsControllers(controllers, controllerAliases)) {
-            return null
-        }
 
         return TaskDescriptor(
             id = id,
@@ -151,6 +155,7 @@ class InterfaceCatalogLoader(
             entry = obj["entry"].primitiveContent() ?: "",
             groups = stringArray(obj["group"]),
             controllers = controllers,
+            controllerSupported = supportsControllers(controllers, controllerAliases),
             supportedResources = stringArray(obj["resource"]),
             defaultChecked = obj["default_check"]?.jsonPrimitive?.booleanOrNull ?: false,
             repeatable = obj["repeatable"]?.jsonPrimitive?.booleanOrNull ?: false,

@@ -6,6 +6,20 @@ import com.maaframework.android.model.TaskOptionInput
 import com.maaframework.android.model.TaskOptionType
 
 object TaskOptionSupport {
+    /** Unsupported controller tasks remain visible at the end, even for a desktop-only resource. */
+    fun visibleTasks(tasks: List<TaskDescriptor>, resourceId: String?): List<TaskDescriptor> =
+        orderTasks(tasks.filter { !it.controllerSupported || taskSupportsResource(it, resourceId) })
+
+    /** Stable compatibility partition, with product pins applied only inside each partition. */
+    fun orderTasks(tasks: List<TaskDescriptor>, pinnedTaskIds: Set<String> = emptySet()): List<TaskDescriptor> {
+        val pins = pinnedTaskIds.withIndex().associate { it.value to it.index }
+        return tasks.sortedWith(compareBy<TaskDescriptor> { !it.controllerSupported }
+            .thenBy { pins[it.id] ?: Int.MAX_VALUE })
+    }
+
+    fun unsupportedTaskMessage(tasks: List<TaskDescriptor>): String? =
+        tasks.firstOrNull { !it.controllerSupported }?.let { "任务「${it.label}」不支持当前 Android 控制器，无法执行" }
+
     fun taskSupportsResource(
         task: TaskDescriptor,
         resourceId: String?,

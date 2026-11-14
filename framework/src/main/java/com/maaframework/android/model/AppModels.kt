@@ -59,6 +59,8 @@ data class TaskDescriptor(
     val repeatable: Boolean = false,
     val repeatCount: Int = 1,
     val options: List<TaskOptionDescriptor> = emptyList(),
+    /** Compatibility declared by interface.json, not a device execution certification. */
+    val controllerSupported: Boolean = true,
 )
 
 @Serializable

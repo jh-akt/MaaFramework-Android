@@ -1,26 +1,18 @@
 package com.maaframework.android.host
 
 import com.maaframework.android.model.TaskDescriptor
+import com.maaframework.android.catalog.TaskOptionSupport
 
 data class MaaHostPolicy(
     val prependTaskIds: List<String> = emptyList(),
     val pinnedTaskIds: Set<String> = emptySet(),
     val taskLabels: Map<String, String> = emptyMap(),
 ) {
-    fun visibleTasks(tasks: List<TaskDescriptor>, resourceId: String?): List<TaskDescriptor> {
-        return tasks.filter { task ->
-            task.supportedResources.isEmpty() || resourceId.isNullOrBlank() || resourceId in task.supportedResources
-        }
-    }
+    fun visibleTasks(tasks: List<TaskDescriptor>, resourceId: String?): List<TaskDescriptor> =
+        TaskOptionSupport.visibleTasks(tasks, resourceId)
 
-    fun orderedTasks(tasks: List<TaskDescriptor>): List<TaskDescriptor> {
-        if (pinnedTaskIds.isEmpty()) return tasks
-        val order = pinnedTaskIds.withIndex().associate { it.value to it.index }
-        return tasks.sortedWith(
-            compareBy<TaskDescriptor> { order[it.id] ?: Int.MAX_VALUE }
-                .thenBy { tasks.indexOf(it) },
-        )
-    }
+    fun orderedTasks(tasks: List<TaskDescriptor>): List<TaskDescriptor> =
+        TaskOptionSupport.orderTasks(tasks, pinnedTaskIds)
 
     fun buildSequence(
         requested: List<TaskDescriptor>,
