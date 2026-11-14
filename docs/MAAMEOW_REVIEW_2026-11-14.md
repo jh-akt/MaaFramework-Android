@@ -20,7 +20,11 @@
 - ADB 排序默认：目录解析与公共 UI 都按兼容性稳定排序；兼容任务在前，非兼容任务在后，各组内部应用置顶策略。桌面专属任务保留标识和详情，禁止勾选，宿主与 Runtime 双重拒绝执行。未声明 controller 按接口规范视为通用任务；支持声明不等于已通过实机验证。
 - 息屏恢复：`MaaDisplayPowerRecovery` 统一监听亮屏事件、异步恢复、接收器释放与会话隔离，`MaaDisplayPowerPolicy` 控制亮屏事件策略；四个应用共用。停止、失败、正常断连由 Root runtime 恢复，卡死时尽力恢复，异常退出保留标记供下一次连接恢复。
 
-验证包括框架与宿主单元测试、四应用编译以及 Fgo APK 打包检查。设备侧 Root、触控、停止、息屏唤醒、超时杀进程仍需实机验证；已连接 Android 17 手机并安装启动 Fgo，Root 授权与 Runtime 连接成功；其他运行行为继续实机验收。下文行号对应初始审查基线，实施后已经变化。
+验证：框架 53 项、公共宿主 7 项、Fgo 2 项、MaaEnd 1 项单元测试通过；四应用编译通过，Fgo 完整 APK 打包与 payload 检查通过。Android 17 / 4 KB 页手机已验证安装启动、Root 授权、Runtime 连接、首次准备、重复准备缓存和息屏恢复。二次准备后 interface 与 identity 文件的 inode/mtime/大小均未改变，日志不再出现解包。
+
+设备验收额外发现 16 KB 构建问题：自编译 bridge/launcher 增加 LOAD 与 RELRO 链接对齐；公共 UI 显式依赖 graphics-path 1.1.0，替换 1.0.1 中跨 RELRO 尾页的可写数据布局。依据 [Android 页大小检查说明](https://developer.android.com/guide/practices/page-sizes) 与 [Graphics 发布记录](https://developer.android.com/jetpack/androidx/releases/graphics)，用实际 ELF 验证，不通过隐藏系统提示规避。
+
+尚未验证：真正的 16 KB 设备、实机战斗、运行中停止、触控压力与卡死进程故障注入。下文行号对应初始审查基线，实施后已经变化。
 
 ## 优先级与建议顺序
 

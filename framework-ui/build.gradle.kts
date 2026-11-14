@@ -37,6 +37,8 @@ dependencies {
 
     implementation("androidx.core:core-ktx:1.17.0")
     implementation("androidx.activity:activity-compose:1.12.4")
+    // 1.1.0 separates writable data from RELRO on 16 KB page-size devices.
+    implementation("androidx.graphics:graphics-path:1.1.0")
     implementation(platform("androidx.compose:compose-bom:2026.02.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.material3:material3")
