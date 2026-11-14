@@ -19,4 +19,7 @@ interface IRootRuntimeService {
     String readLogChunk(long offsetBytes, int maxBytes);
     String exportDiagnostics();
     oneway void destroy();
+    int getProcessId();
+    String dumpThreads();
+    void touchCancel();
 }

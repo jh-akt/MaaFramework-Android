@@ -43,49 +43,57 @@ object RuntimeBootstrapper {
         context: Context,
         logger: RuntimeLogger,
         runtimeRoot: File = defaultRuntimeRoot(context),
+        checkCancelled: () -> Unit = {},
     ): RuntimePrepareResult {
         val assets = context.assets
-        val projectManifest = MaaProjectManifestLoader.loadOrDefault(assets)
-        val persistentRepoStatus = resolveResourceRepositoryStatus(context, projectManifest, logger)
-
-        runtimeRoot.mkdirs()
-        File(runtimeRoot, "logs").mkdirs()
-        File(runtimeRoot, "debug").mkdirs()
-        File(runtimeRoot, "diagnostics").mkdirs()
+        val manifest = MaaProjectManifestLoader.load(context.assets)
+        checkCancelled()
         stopStaleAgentProcesses(runtimeRoot, logger)
-        resetRuntimePayload(runtimeRoot, logger)
-
-        if (!persistentRepoStatus.available) {
-            val detail = persistentRepoStatus.lastError?.takeIf { it.isNotBlank() }
-                ?: "resource repository not synced yet"
-            error("GitHub resource repository unavailable: $detail")
-        }
-
-        val bundledPath = projectManifest.bundledResourcePath
-        if (bundledPath != null) {
-            copyAssetEntry(assets, bundledPath, runtimeRoot, logger)
-            logger.log("Runtime resources prepared from APK assets")
+        val apk = File(context.applicationInfo.sourceDir)
+        val apkIdentity = "payload-v2:${apk.absolutePath}:${apk.length()}:${apk.lastModified()}"
+        val store = RuntimePayloadStore(runtimeRoot)
+        fun preparePayload(repo: File?, revision: String): File = store.prepare(
+            identity = "$apkIdentity:$revision",
+            checkCancelled = checkCancelled,
+            build = { staging ->
+                if (repo != null) {
+                    collectRequiredRepoEntries(repo).forEach { entry ->
+                        checkCancelled()
+                        require(entry.split('/').none { it == ".." } && !entry.startsWith('/')) { "Invalid project asset path" }
+                        copyFileEntry(File(repo, entry), File(staging, entry), logger, checkCancelled)
+                    }
+                } else {
+                    copyAssetEntry(assets, requireNotNull(manifest.bundledResourcePath), staging, logger, checkCancelled)
+                }
+                if (assetEntryExists(assets, "bundled_runtime")) {
+                    copyAssetEntry(assets, "bundled_runtime", staging, logger, checkCancelled)
+                }
+                checkCancelled()
+                overlayBundledPrivatePipeline(staging, logger)
+                seedPythonAgentDeployVersion(staging, logger)
+                applyPythonAgentCompatibilityPatches(staging, logger)
+            },
+            validate = { root ->
+                File(root, "interface.json").isFile &&
+                    listOf("libMaaFramework.so", "libMaaAgentClient.so", "libMaaAgentServer.so").all { File(root, "maafw/$it").isFile } &&
+                    RuntimeAgentResolver.resolve(root)?.isRunnable == true
+            },
+        )
+        val preparedRoot = if (manifest.bundledResourcePath != null) {
+            preparePayload(null, "bundled:${manifest.projectId}")
         } else {
-            val repoRoot = PersistentProjectRepositoryManager.currentRoot(context, projectManifest)
-            collectRequiredRepoEntries(repoRoot).forEach { entry ->
-                copyFileEntry(File(repoRoot, entry), File(runtimeRoot, entry), logger)
+            // Network sync belongs to the host. The worker only waits for a cancellable snapshot lease.
+            PersistentProjectRepositoryManager.withSnapshot(context, manifest, checkCancelled) { repo, status ->
+                preparePayload(repo, "${status.mainRevision}:${status.updatedAt}")
             }
-            logger.log("Runtime resources prepared from persistent GitHub repository")
         }
-
-        if (assetEntryExists(assets, "bundled_runtime")) {
-            copyAssetEntry(assets, "bundled_runtime", runtimeRoot, logger)
-        }
-        overlayBundledPrivatePipeline(runtimeRoot, logger)
-        seedPythonAgentDeployVersion(runtimeRoot, logger)
-        applyPythonAgentCompatibilityPatches(runtimeRoot, logger)
-
-        val maafwDir = File(runtimeRoot, "maafw")
-        val agentRuntimes = RuntimeAgentResolver.detect(runtimeRoot)
+        checkCancelled()
+        val maafwDir = File(preparedRoot, "maafw")
+        val agentRuntimes = RuntimeAgentResolver.detect(preparedRoot)
         agentRuntimes.forEach { agent ->
             agent.executableFile?.takeIf { it.isFile }?.setExecutable(true, false)
         }
-        val selectedAgent = RuntimeAgentResolver.resolve(runtimeRoot)
+        val selectedAgent = RuntimeAgentResolver.resolve(preparedRoot)
         agentRuntimes.forEach { agent ->
             logger.log(
                 "Detected agent runtime: kind=${agent.kind} source=${agent.source} " +
@@ -94,7 +102,7 @@ object RuntimeBootstrapper {
         }
 
         val capabilities = RuntimeCapabilities(
-            hasBundledGoService = File(runtimeRoot, "agent/go-service").isFile,
+            hasBundledGoService = File(preparedRoot, "agent/go-service").isFile,
             hasBundledMaaFramework = maafwDir.exists() && maafwDir.list()?.isNotEmpty() == true,
             canLaunchWindowedGame = true,
             agentRuntimes = agentRuntimes.map { agent ->
@@ -117,7 +125,7 @@ object RuntimeBootstrapper {
 
         logger.log(message)
         return RuntimePrepareResult(
-            runtimeRoot = runtimeRoot,
+            runtimeRoot = preparedRoot,
             capabilities = capabilities,
             message = message,
         )
@@ -125,23 +133,6 @@ object RuntimeBootstrapper {
 
     fun defaultRuntimeRoot(context: Context): File {
         return File("/data/local/tmp/${context.packageName}/maaframework-runtime/$RUNTIME_VERSION")
-    }
-
-    private fun resolveResourceRepositoryStatus(
-        context: Context,
-        projectManifest: com.maaframework.android.project.MaaProjectManifest,
-        logger: RuntimeLogger,
-    ): PersistentProjectRepositoryStatus {
-        val existing = PersistentProjectRepositoryManager.loadStatus(context, projectManifest)
-        if (existing.available) {
-            return existing
-        }
-        logger.log("Persistent GitHub repository unavailable, syncing project resources before prepare")
-        return PersistentProjectRepositoryManager.ensureAvailable(
-            context = context,
-            manifest = projectManifest,
-            logger = logger::log,
-        )
     }
 
     private fun collectRequiredRepoEntries(repoRoot: File): List<String> {
@@ -200,7 +191,9 @@ object RuntimeBootstrapper {
         assetPath: String,
         target: File,
         logger: RuntimeLogger,
+        checkCancelled: () -> Unit = {},
     ) {
+        checkCancelled()
         val children = try {
             assets.list(assetPath) ?: emptyArray()
         } catch (_: Throwable) {
@@ -214,7 +207,7 @@ object RuntimeBootstrapper {
             target.parentFile?.mkdirs()
             assets.open(assetPath).use { input ->
                 target.outputStream().use { output ->
-                    input.copyTo(output)
+                    copyCancellable(input, output, checkCancelled)
                 }
             }
             return
@@ -227,6 +220,7 @@ object RuntimeBootstrapper {
                 assetPath = "$assetPath/$child",
                 target = File(target, child),
                 logger = logger,
+                checkCancelled = checkCancelled,
             )
         }
         logger.log("Extracted asset directory: $assetPath")
@@ -236,45 +230,23 @@ object RuntimeBootstrapper {
         source: File,
         target: File,
         logger: RuntimeLogger,
+        checkCancelled: () -> Unit = {},
     ) {
+        checkCancelled()
         if (!source.exists()) {
             return
         }
         if (source.isDirectory) {
-            copyDirectoryContents(source, target)
+            copyDirectoryContents(source, target, checkCancelled)
             logger.log("Extracted repository directory: ${source.relativeToOrSelf(source.parentFile ?: source).path}")
             return
         }
         target.parentFile?.mkdirs()
         source.inputStream().use { input ->
             target.outputStream().use { output ->
-                input.copyTo(output)
+                copyCancellable(input, output, checkCancelled)
             }
         }
-    }
-
-    private fun resetRuntimePayload(runtimeRoot: File, logger: RuntimeLogger) {
-        val staleEntries = listOf(
-            "interface.json",
-            "locales",
-            "i18n",
-            "tasks",
-            "resource",
-            "resource_adb",
-            "agent",
-            "custom",
-            "maafw",
-            "python",
-            "requirements.txt",
-            "MaaPiCli",
-            "bundled_runtime",
-            "private_pipeline",
-        )
-        staleEntries.forEach { name ->
-            deleteRecursively(File(runtimeRoot, name))
-        }
-        deleteRecursively(File(runtimeRoot, "maafw/plugins.disabled"))
-        logger.log("Cleared stale runtime payload before prepare")
     }
 
     private fun overlayBundledPrivatePipeline(runtimeRoot: File, logger: RuntimeLogger) {
@@ -347,8 +319,9 @@ object RuntimeBootstrapper {
         logger.log("Added Python module compatibility alias: $to -> $from")
     }
 
-    private fun copyDirectoryContents(sourceRoot: File, targetRoot: File) {
+    private fun copyDirectoryContents(sourceRoot: File, targetRoot: File, checkCancelled: () -> Unit = {}) {
         sourceRoot.walkTopDown().forEach { file ->
+            checkCancelled()
             val relative = file.relativeTo(sourceRoot)
             val target = File(targetRoot, relative.path)
             if (file.isDirectory) {
@@ -357,19 +330,29 @@ object RuntimeBootstrapper {
                 target.parentFile?.mkdirs()
                 file.inputStream().use { input ->
                     target.outputStream().use { output ->
-                        input.copyTo(output)
+                        copyCancellable(input, output, checkCancelled)
                     }
                 }
             }
         }
     }
 
+    private fun copyCancellable(input: java.io.InputStream, output: java.io.OutputStream, checkCancelled: () -> Unit) {
+        val buffer = ByteArray(128 * 1024)
+        while (true) {
+            checkCancelled()
+            val count = input.read(buffer)
+            if (count < 0) return
+            output.write(buffer, 0, count)
+        }
+    }
+
     private fun stopStaleAgentProcesses(runtimeRoot: File, logger: RuntimeLogger) {
         val runtimePath = runtimeRoot.absolutePath
         val command = listOf(
-            "pkill -f '$runtimePath/agent/' || true",
-            "pkill -f '$runtimePath/python/' || true",
-            "pkill -f '$runtimePath/MaaAgentBinary/' || true",
+            "pkill -f '^$runtimePath/(current/|previous/)?agent/' || true",
+            "pkill -f '^$runtimePath/(current/|previous/)?python/' || true",
+            "pkill -f '^$runtimePath/(current/|previous/)?MaaAgentBinary/' || true",
         ).joinToString("; ")
         runCatching {
             val process = ProcessBuilder("/system/bin/sh", "-c", command)

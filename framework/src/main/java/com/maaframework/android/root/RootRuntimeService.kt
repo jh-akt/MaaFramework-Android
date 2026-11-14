@@ -50,6 +50,8 @@ class RootRuntimeService(
     @Volatile
     private var logger: RuntimeLogger? = null
 
+    private var preparedCatalog: com.maaframework.android.model.CatalogSnapshot? = null
+
     private val operationGate = RuntimeOperationGate()
 
     @Volatile
@@ -80,25 +82,48 @@ class RootRuntimeService(
         }
     }
 
-    override fun prepareRuntime(): Boolean {
+    /** Returns admission, completion is reported through getState(). */
+    override fun prepareRuntime(): Boolean = submitOperation("Preparing runtime") { operation ->
+        prepareRuntimeInternal(operation)
+    }
+
+    private fun submitOperation(message: String, work: (RuntimeOperationGate.Operation) -> Unit): Boolean = synchronized(operationGate) {
         val operation = operationGate.acquire() ?: return false
+        updateSnapshot { it.copy(operationId = operation.id, phase = RunSessionPhase.Preparing, lastMessage = message) }
         try {
-            return prepareRuntimeInternal(operation) && !operation.stopRequested
-        } finally {
-            operationGate.finish(operation) {
-                if (operation.stopRequested) completeRun(null, "Preparation stopped", RunSessionPhase.Idle)
+            executor.execute {
+                try {
+                    operation.checkActive()
+                    work(operation)
+                } catch (_: java.util.concurrent.CancellationException) {
+                    // The reservation is retained until the worker actually returns.
+                } catch (error: Throwable) {
+                    if (!operation.stopRequested) failRun(null, error.message ?: "Runtime operation failed")
+                } finally {
+                    operationGate.finish(operation) {
+                        if (operation.stopRequested) completeRun(null, "Operation stopped", RunSessionPhase.Idle)
+                    }
+                }
             }
+            true
+        } catch (error: java.util.concurrent.RejectedExecutionException) {
+            operationGate.finish(operation)
+            false
         }
     }
 
     private fun prepareRuntimeInternal(operation: RuntimeOperationGate.Operation): Boolean {
         updateSnapshot { it.copy(phase = RunSessionPhase.Preparing, runtimePrepared = false, lastMessage = "Preparing runtime") }
         return runCatching {
+            val oldBridge = synchronized(operationGate) { maaBridge.also { maaBridge = null } }
+            oldBridge?.destroy()
+            operation.checkActive()
             val root = runtimeRootDirectory()
             val runtimeLogger = RuntimeLogger(root)
             logger = runtimeLogger
-            val result = RuntimeBootstrapper.prepare(context, runtimeLogger, root)
+            val result = RuntimeBootstrapper.prepare(context, runtimeLogger, root, operation::checkActive)
             runtimeRoot = result.runtimeRoot
+            preparedCatalog = null
             updateSnapshot {
                 it.copy(
                     phase = if (operation.stopRequested) RunSessionPhase.Stopping else RunSessionPhase.Idle,
@@ -112,26 +137,14 @@ class RootRuntimeService(
             }
             true
         }.getOrElse { error ->
+            if (error is java.util.concurrent.CancellationException) throw error
             failRun(taskId = null, message = "Runtime prepare failed: ${error.message}")
             false
         }
     }
 
-    override fun startRun(runRequestJson: String): Boolean {
-        val operation = operationGate.acquire() ?: return false
-        var submitted = false
-        try {
-            updateSnapshot { it.copy(phase = RunSessionPhase.Preparing, lastMessage = "Starting run") }
-            submitted = startRunOwned(runRequestJson, operation)
-            return submitted
-        } catch (error: Throwable) {
-            failRun(null, "Run start failed: ${error.message}")
-            return false
-        } finally {
-            if (!submitted) operationGate.finish(operation) {
-                if (operation.stopRequested) completeRun(null, "Run stopped", RunSessionPhase.Idle)
-            }
-        }
+    override fun startRun(runRequestJson: String): Boolean = submitOperation("Starting run") { operation ->
+        startRunOwned(runRequestJson, operation)
     }
 
     private fun startRunOwned(runRequestJson: String, operation: RuntimeOperationGate.Operation): Boolean {
@@ -141,7 +154,8 @@ class RootRuntimeService(
                 return false
             }
 
-        if (!snapshot.runtimePrepared && !prepareRuntimeInternal(operation)) {
+        // Checks the resource/APK identity on each run; unchanged payloads are reused.
+        if (!prepareRuntimeInternal(operation)) {
             failRun(taskId = request.taskId, message = "Runtime prepare failed before run")
             return false
         }
@@ -169,26 +183,26 @@ class RootRuntimeService(
         }
 
         if (operation.stopRequested) return false
-        executor.submit {
+        run {
             val runLabel = request.taskId ?: request.presetId ?: "sequence"
             var priorityState: TaskExecutionThreadPriorityState? = null
             try {
                 priorityState = elevateTaskExecutionThreadPriority(runLabel)
-                if (operation.stopRequested) return@submit
+                if (operation.stopRequested) return@run
                 log("Run started: ${request.taskId ?: request.presetId ?: taskIds.joinToString(",")}")
                 if (!prepareVirtualDisplayForRun(resource)) {
                     failRun(
                         taskIds.firstOrNull(),
                         "Failed to prepare 16:9 virtual display for resource ${resource.id}",
                     )
-                    return@submit
+                    return@run
                 }
                 for (taskId in taskIds) {
                     if (operation.stopRequested) {
-                        return@submit
+                        return@run
                     }
-                    if (!runSingleTask(taskId, request.optionOverridesByTask[taskId], resource, request.logLevel, operation)) {
-                        return@submit
+                    if (!runSingleTask(taskId, request.optionOverridesByTask[taskId] ?: request.optionOverridesJson.takeIf { taskId == taskIds.first() }, resource, request.logLevel, operation)) {
+                        return@run
                     }
                 }
                 if (!operation.stopRequested) completeRun(taskIds.last(), "Run completed", RunSessionPhase.Completed)
@@ -198,9 +212,8 @@ class RootRuntimeService(
                 try {
                     priorityState?.let { restoreTaskExecutionThreadPriority(runLabel, it) }
                 } finally {
-                    operationGate.finish(operation) {
-                        if (operation.stopRequested) completeRun(null, "Run stopped", RunSessionPhase.Idle)
-                    }
+                    val bridge = synchronized(operationGate) { maaBridge.also { maaBridge = null } }
+                    bridge?.destroy()
                 }
             }
         }
@@ -211,25 +224,19 @@ class RootRuntimeService(
         operationGate.requestStop {
             updateSnapshot { it.copy(phase = RunSessionPhase.Stopping, lastMessage = "Stop requested") }
             maaBridge?.stop()
-            ensureDisplayPowerOn("Run stopping, restoring screen power")
         }
+        ensureDisplayPowerOn("Run stopping, restoring screen power")
     }
 
     override fun setMonitorSurface(surface: Surface?) {
         VirtualDisplayManager.setMonitorSurface(surface)
     }
 
-    override fun startWindowedGame(resourceId: String?): Boolean {
-        val launched = launchResourceOnVirtualDisplay(
-            resourceId = resourceId,
-            requirePackage = true,
-            forceStop = true,
-            excludeFromRecents = false,
-        )
-        if (launched) {
-            log("Windowed game launched for resource=$resourceId displayId=${VirtualDisplayManager.getDisplayId()}")
-        }
-        return launched
+    override fun startWindowedGame(resourceId: String?): Boolean = submitOperation("Opening game") { operation ->
+        operation.checkActive()
+        val launched = launchResourceOnVirtualDisplay(resourceId, true, true, false)
+        completeRun(null, if (launched) "Windowed game launched" else "Windowed game launch failed",
+            if (launched) RunSessionPhase.Idle else RunSessionPhase.Failed)
     }
 
     override fun touchDown(contactId: Int, x: Int, y: Int): Boolean {
@@ -250,10 +257,17 @@ class RootRuntimeService(
         }
     }
 
+    override fun touchCancel() {
+        com.maaframework.android.bridge.InputControlUtils.cancel()
+    }
+
     override fun getWindowedDisplayId(): Int = VirtualDisplayManager.getDisplayId()
 
     override fun stopWindowedPreview() {
-        VirtualDisplayManager.stop()
+        submitOperation("Closing preview") {
+            VirtualDisplayManager.stop()
+            completeRun(null, "Preview closed", RunSessionPhase.Idle)
+        }
     }
 
     override fun setDisplayPower(on: Boolean): Boolean {
@@ -317,11 +331,13 @@ class RootRuntimeService(
         return output.absolutePath
     }
 
-    override fun destroy() {
-        operationGate.close {
-            maaBridge?.stop()
-            ensureDisplayPowerOn("Runtime shutting down, restoring screen power")
-        }
+    private var destroyScheduled = false
+
+    override fun destroy(): Unit = synchronized(operationGate) {
+        if (destroyScheduled) return
+        destroyScheduled = true
+        operationGate.close { maaBridge?.stop() }
+        // Admission and enqueue share the gate, so shutdown can never overtake preparation.
         executor.execute {
             try {
                 maaBridge?.destroy()
@@ -334,6 +350,12 @@ class RootRuntimeService(
         }
         executor.shutdown()
     }
+
+    override fun getProcessId(): Int = Process.myPid()
+
+    override fun dumpThreads(): String = Thread.getAllStackTraces().entries.joinToString("\n\n") { (thread, stack) ->
+        "${thread.name} (${thread.state})\n${stack.joinToString("\n")}"
+    }.take(128 * 1024)
 
     private fun runSingleTask(
         taskId: String,
@@ -471,10 +493,12 @@ class RootRuntimeService(
         return true
     }
 
-    private fun loadCatalogSnapshot() = if ((runtimeRoot ?: runtimeRootDirectory()).resolve("interface.json").exists()) {
-        catalogLoader.loadFromDirectory(runtimeRoot ?: runtimeRootDirectory())
-    } else {
-        catalogLoader.load()
+    // All catalog consumers run on the runtime worker. Reparse once per prepared generation.
+    private fun loadCatalogSnapshot(): com.maaframework.android.model.CatalogSnapshot {
+        preparedCatalog?.let { return it }
+        val root = runtimeRoot ?: runtimeRootDirectory()
+        return (if (root.resolve("interface.json").exists()) catalogLoader.loadFromDirectory(root)
+            else catalogLoader.load()).also { preparedCatalog = it }
     }
 
     private fun completeRun(taskId: String?, message: String, phase: RunSessionPhase) {

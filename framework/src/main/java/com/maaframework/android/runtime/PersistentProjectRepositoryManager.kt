@@ -5,7 +5,6 @@ import com.maaframework.android.project.GitHubResourceRepositoryConfig
 import com.maaframework.android.project.MaaProjectManifest
 import java.io.BufferedInputStream
 import java.io.File
-import java.io.RandomAccessFile
 import java.net.URLEncoder
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
@@ -543,13 +542,20 @@ object PersistentProjectRepositoryManager {
         }
     }
 
-    @Synchronized
-    private fun <T> withRepositoryLock(context: Context, manifest: MaaProjectManifest, action: () -> T): T {
+    /** Snapshot readers hold the same lease as publication and clear, including across processes. */
+    fun <T> withSnapshot(context: Context, manifest: MaaProjectManifest, checkCancelled: () -> Unit, action: (File, PersistentProjectRepositoryStatus) -> T): T =
+        withRepositoryLock(context, manifest, checkCancelled) {
+            val root = currentRoot(context, manifest)
+            RepositoryDirectoryTransaction().recover(root, File(root.parentFile, "previous"))
+            val status = loadStatusUnlocked(context, manifest)
+            check(status.available) { "Project resources are unavailable; synchronize them before preparing" }
+            action(root, status)
+        }
+
+    private fun <T> withRepositoryLock(context: Context, manifest: MaaProjectManifest, checkCancelled: () -> Unit = {}, action: () -> T): T {
         val base = sharedBaseDir(context, manifest.projectId)
         check(base.parentFile!!.isDirectory || base.parentFile!!.mkdirs()) { "Cannot create repository parent" }
-        RandomAccessFile(File(base.parentFile, "${base.name}.lock"), "rw").use { file ->
-            file.channel.lock().use { return action() }
-        }
+        return withRepositoryFileLease(File(base.parentFile, "${base.name}.lock"), checkCancelled, action)
     }
 
     private fun submoduleApiUrl(owner: String, repo: String, apiPath: String, branch: String): String {

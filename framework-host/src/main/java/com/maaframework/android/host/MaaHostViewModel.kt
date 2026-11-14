@@ -16,7 +16,6 @@ import com.maaframework.android.model.RuntimeLogChunk
 import com.maaframework.android.model.RuntimeStateSnapshot
 import com.maaframework.android.model.TaskDescriptor
 import com.maaframework.android.model.TaskOptionDescriptor
-import com.maaframework.android.model.TaskOptionType
 import com.maaframework.android.project.MaaProjectManifest
 import com.maaframework.android.project.MaaProjectManifestLoader
 import com.maaframework.android.runtime.PersistentProjectRepositoryManager
@@ -32,28 +31,22 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import com.maaframework.android.catalog.MaaOptionOverrides.buildOptionOverride
+import com.maaframework.android.catalog.MaaOptionOverrides.mergeOverrideJson
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonArray
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.jsonObject
 
-class MaaHostViewModel(
+open class MaaHostViewModel @JvmOverloads constructor(
     application: Application,
+    preferencesName: String? = null,
+    displayPowerPolicy: MaaDisplayPowerPolicy = MaaDisplayPowerPolicy(),
 ) : AndroidViewModel(application) {
     private val manifest = MaaProjectManifestLoader.loadOrDefault(application.assets)
     private val catalogLoader = InterfaceCatalogLoader(application.assets, manifest.supportedControllers, manifest.bundledResourcePath.orEmpty())
     private val session = MaaFrameworkSession(application)
-    private val settingsRepository = MaaHostSettingsRepository(application, "${manifest.projectId}_android_settings", manifest.projectId)
-    private val json = Json {
-        ignoreUnknownKeys = true
-        isLenient = true
-    }
+    private val settingsRepository = MaaHostSettingsRepository(application, preferencesName ?: "${manifest.projectId}_android_settings", manifest.projectId)
+
 
     private val _uiState = MutableStateFlow(MaaHostState())
     val uiState: StateFlow<MaaHostState> = _uiState.asStateFlow()
@@ -63,6 +56,9 @@ class MaaHostViewModel(
     private var connectJob: Job? = null
     private var previewSurface: Surface? = null
     private var logCursor = 0L
+    private val displayPowerRecovery = MaaDisplayPowerRecovery(application, viewModelScope, displayPowerPolicy) {
+        _uiState.update { it.copy(lastMessage = "检测到亮屏，已退出息屏挂机") }
+    }
 
     init {
         val appSettings = settingsRepository.load()
@@ -97,22 +93,22 @@ class MaaHostViewModel(
             ?: visibleTasks.firstOrNull()?.id
         val checkedTaskIds = _uiState.value.checkedTaskIds
             .filterTo(linkedSetOf()) { taskId -> visibleTasks.any { it.id == taskId } }
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { current -> current.copy(
             selectedResourceId = resourceId,
             selectedTaskId = selectedTaskId,
             checkedTaskIds = checkedTaskIds,
-        )
+        ) }
         settingsRepository.saveSelectedResourceId(resourceId)
         settingsRepository.saveSelectedTaskId(selectedTaskId)
         settingsRepository.saveCheckedTaskIds(checkedTaskIds)
     }
 
     fun selectTab(tab: MaaHostTab) {
-        _uiState.value = _uiState.value.copy(activeTab = tab)
+        _uiState.update { current -> current.copy(activeTab = tab) }
     }
 
     fun selectTask(taskId: String) {
-        _uiState.value = _uiState.value.copy(selectedTaskId = taskId)
+        _uiState.update { current -> current.copy(selectedTaskId = taskId) }
         settingsRepository.saveSelectedTaskId(taskId)
     }
 
@@ -124,23 +120,23 @@ class MaaHostViewModel(
                 remove(taskId)
             }
         }
-        _uiState.value = _uiState.value.copy(checkedTaskIds = updated)
+        _uiState.update { current -> current.copy(checkedTaskIds = updated) }
         settingsRepository.saveCheckedTaskIds(updated)
     }
 
     fun selectPreset(presetId: String) {
-        _uiState.value = _uiState.value.copy(selectedPresetId = presetId)
+        _uiState.update { current -> current.copy(selectedPresetId = presetId) }
         settingsRepository.saveSelectedPresetId(presetId)
     }
 
     fun updateOverrideJson(value: String) {
-        _uiState.value = _uiState.value.copy(overrideJson = value)
+        _uiState.update { current -> current.copy(overrideJson = value) }
         settingsRepository.saveOverrideJson(value)
     }
 
     fun updateLogLevel(value: String) {
         val normalized = MaaLogLevels.normalize(value)
-        _uiState.value = _uiState.value.copy(logLevel = normalized)
+        _uiState.update { current -> current.copy(logLevel = normalized) }
         settingsRepository.saveLogLevel(normalized)
     }
 
@@ -167,9 +163,9 @@ class MaaHostViewModel(
         val currentOptionValues = currentTaskValues[optionId].orEmpty()
         val updatedTaskValues = currentTaskValues + (optionId to (currentOptionValues + (inputName to value)))
         val nextValues = _uiState.value.taskInputValuesByTask + (taskId to updatedTaskValues)
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { current -> current.copy(
             taskInputValuesByTask = nextValues,
-        )
+        ) }
         settingsRepository.saveTaskInputValuesByTask(nextValues)
     }
 
@@ -186,11 +182,11 @@ class MaaHostViewModel(
         if (_uiState.value.resourceRepositoryUpdating) {
             return
         }
-        _uiState.value = _uiState.value.copy(resourceRepositoryClearConfirmVisible = true)
+        _uiState.update { current -> current.copy(resourceRepositoryClearConfirmVisible = true) }
     }
 
     fun dismissClearResourceRepositoryConfirmation() {
-        _uiState.value = _uiState.value.copy(resourceRepositoryClearConfirmVisible = false)
+        _uiState.update { current -> current.copy(resourceRepositoryClearConfirmVisible = false) }
     }
 
     fun clearResourceRepository() {
@@ -206,28 +202,28 @@ class MaaHostViewModel(
 
         connectJob = viewModelScope.launch {
             val rootReport = session.rootDiagnostics()
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { current -> current.copy(
                 rootReport = rootReport,
                 busy = true,
-                lastMessage = if (silent) _uiState.value.lastMessage else "Checking root runtime",
-            )
+                lastMessage = if (silent) current.lastMessage else "Checking root runtime",
+            ) }
             if (!rootReport.available) {
-                _uiState.value = _uiState.value.copy(
+                _uiState.update { current -> current.copy(
                     busy = false,
                     lastMessage = rootReport.summary,
-                )
+                ) }
                 return@launch
             }
 
             if (!rootReport.granted) {
                 val granted = session.requestRootPermission()
                 val refreshedReport = session.rootDiagnostics()
-                _uiState.value = _uiState.value.copy(rootReport = refreshedReport)
+                _uiState.update { current -> current.copy(rootReport = refreshedReport) }
                 if (!granted) {
-                    _uiState.value = _uiState.value.copy(
+                    _uiState.update { current -> current.copy(
                         busy = false,
                         lastMessage = refreshedReport.summary.ifBlank { "Root permission was not granted" },
-                    )
+                    ) }
                     return@launch
                 }
             }
@@ -237,11 +233,11 @@ class MaaHostViewModel(
                 bindService(client)
             }.onFailure { error ->
                 Log.e(TAG, "Failed to connect root runtime", error)
-                _uiState.value = _uiState.value.copy(
+                _uiState.update { current -> current.copy(
                     busy = false,
                     rootConnected = false,
                     lastMessage = "Failed to connect root runtime: ${error.message}",
-                )
+                ) }
             }
         }
     }
@@ -251,9 +247,9 @@ class MaaHostViewModel(
             actionName = "Preparing runtime",
             action = { it.prepareRuntime() },
             onSuccess = { prepared ->
-                _uiState.value = _uiState.value.copy(
-                    lastMessage = if (prepared) "Runtime prepared" else "Runtime prepare request failed",
-                )
+                _uiState.update { current -> current.copy(
+                    lastMessage = if (prepared) "Runtime preparation queued" else "Runtime prepare request failed",
+                ) }
             },
         )
     }
@@ -264,13 +260,13 @@ class MaaHostViewModel(
             actionName = "Opening game",
             action = { it.startWindowedGame(resourceId) },
             onSuccess = { opened ->
-                _uiState.value = _uiState.value.copy(
+                _uiState.update { current -> current.copy(
                     lastMessage = if (opened) {
-                        "Windowed game launched"
+                        "Windowed game launch queued"
                     } else {
                         "Windowed game launch failed"
                     },
-                )
+                ) }
             },
         )
     }
@@ -298,13 +294,18 @@ class MaaHostViewModel(
             actionName = if (restoreScreen) "Restoring screen power" else "Turning screen off",
             action = { it.setDisplayPower(restoreScreen) },
             onSuccess = { changed ->
-                _uiState.value = _uiState.value.copy(
+                if (changed) {
+                    val state = _uiState.value.runtimeState.copy(displayPowerOffActive = !restoreScreen)
+                    displayPowerRecovery.observe(runtimeClient, state)
+                    _uiState.update { it.copy(runtimeState = state) }
+                }
+                _uiState.update { current -> current.copy(
                     lastMessage = if (changed) {
                         if (restoreScreen) "Screen power restored" else "Screen turned off for background run"
                     } else {
                         "Display power change failed"
                     },
-                )
+                ) }
             },
         )
     }
@@ -322,7 +323,7 @@ class MaaHostViewModel(
                     .orEmpty()
             }
         if (requestedTaskIds.isEmpty()) {
-            _uiState.value = state.copy(lastMessage = "Select a task first")
+            _uiState.update { current -> current.copy(lastMessage = "Select a task first") }
             return
         }
         val requestedTasks = requestedTaskIds.mapNotNull { taskId ->
@@ -330,7 +331,7 @@ class MaaHostViewModel(
         }
         val validationError = validateTaskOptionSelections(requestedTasks, state.selectedResourceId)
         if (validationError != null) {
-            _uiState.value = state.copy(lastMessage = validationError)
+            _uiState.update { current -> current.copy(lastMessage = validationError) }
             return
         }
 
@@ -358,7 +359,7 @@ class MaaHostViewModel(
         val state = _uiState.value
         val preset = state.selectedPresetOrNull()
         if (preset == null) {
-            _uiState.value = state.copy(lastMessage = "Select a preset first")
+            _uiState.update { current -> current.copy(lastMessage = "Select a preset first") }
             return
         }
 
@@ -367,12 +368,12 @@ class MaaHostViewModel(
             visibleTasks.firstOrNull { it.id == taskId }
         }
         if (requestedTasks.isEmpty()) {
-            _uiState.value = state.copy(lastMessage = "Preset ${preset.label} has no tasks for the selected resource")
+            _uiState.update { current -> current.copy(lastMessage = "Preset ${preset.label} has no tasks for the selected resource") }
             return
         }
         val validationError = validateTaskOptionSelections(requestedTasks, state.selectedResourceId)
         if (validationError != null) {
-            _uiState.value = state.copy(lastMessage = validationError)
+            _uiState.update { current -> current.copy(lastMessage = validationError) }
             return
         }
 
@@ -400,7 +401,7 @@ class MaaHostViewModel(
                 true
             },
             onSuccess = {
-                _uiState.value = _uiState.value.copy(lastMessage = "Stop requested")
+                _uiState.update { current -> current.copy(lastMessage = "Stop requested") }
             },
         )
     }
@@ -410,7 +411,7 @@ class MaaHostViewModel(
             actionName = "Exporting diagnostics",
             action = { it.exportDiagnostics() },
             onSuccess = { path ->
-                _uiState.value = _uiState.value.copy(lastMessage = "Diagnostics exported: $path")
+                _uiState.update { current -> current.copy(lastMessage = "Diagnostics exported: $path") }
             },
         )
     }
@@ -420,12 +421,12 @@ class MaaHostViewModel(
             persistCurrentSettings()
             settingsRepository.exportTo(outputStream)
         }.onSuccess {
-            _uiState.value = _uiState.value.copy(lastMessage = "配置已导出")
+            _uiState.update { current -> current.copy(lastMessage = "配置已导出") }
         }.onFailure { error ->
             Log.e(TAG, "Failed to export config", error)
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { current -> current.copy(
                 lastMessage = "配置导出失败：${error.message ?: error::class.java.simpleName}",
-            )
+            ) }
         }
     }
 
@@ -434,12 +435,12 @@ class MaaHostViewModel(
             val imported = settingsRepository.importFrom(inputStream)
             applyImportedSettings(imported)
         }.onSuccess {
-            _uiState.value = _uiState.value.copy(lastMessage = "配置已导入")
+            _uiState.update { current -> current.copy(lastMessage = "配置已导入") }
         }.onFailure { error ->
             Log.e(TAG, "Failed to import config", error)
-            _uiState.value = _uiState.value.copy(
+            _uiState.update { current -> current.copy(
                 lastMessage = "配置导入失败：${error.message ?: error::class.java.simpleName}",
-            )
+            ) }
         }
     }
 
@@ -448,9 +449,9 @@ class MaaHostViewModel(
             actionName = label,
             action = { client -> client.startRun(request) },
             onSuccess = { started ->
-                _uiState.value = _uiState.value.copy(
+                _uiState.update { current -> current.copy(
                     lastMessage = if (started) label else "Run request was rejected",
-                )
+                ) }
             },
         )
     }
@@ -459,12 +460,12 @@ class MaaHostViewModel(
         runtimeClient = client
         logCursor = 0L
         runCatching { client.setMonitorSurface(previewSurface) }
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { current -> current.copy(
             busy = false,
             rootConnected = true,
             rootReport = session.rootDiagnostics(),
             lastMessage = "Root runtime connected",
-        )
+        ) }
         startPolling()
     }
 
@@ -486,26 +487,30 @@ class MaaHostViewModel(
                     }
                 }
 
+                if (runtimeClient !== client) break
                 result.onSuccess { poll ->
+                    displayPowerRecovery.observe(client, poll.snapshot)
                     logCursor = poll.logChunk.nextOffsetBytes
-                    _uiState.value = _uiState.value.copy(
+                    _uiState.update { current -> current.copy(
                         servicePing = poll.ping,
                         runtimeState = poll.snapshot,
-                        displayLogs = mergeLogs(_uiState.value.displayLogs, poll.logChunk),
-                        lastMessage = poll.snapshot.lastMessage.ifBlank { _uiState.value.lastMessage },
+                        displayLogs = mergeLogs(current.displayLogs, poll.logChunk),
+                        lastMessage = poll.snapshot.lastMessage.ifBlank { current.lastMessage },
                         rootConnected = true,
                         busy = false,
-                    )
+                    ) }
                 }.onFailure { error ->
                     Log.e(TAG, "Polling root runtime failed", error)
                     val rootReport = session.rootDiagnostics()
-                    _uiState.value = _uiState.value.copy(
+                    _uiState.update { current -> current.copy(
                         rootReport = rootReport,
                         rootConnected = false,
                         busy = false,
                         lastMessage = "Root runtime disconnected: ${error.message ?: rootReport.summary}",
-                    )
+                    ) }
+                    session.disconnect(client)
                     runtimeClient = null
+                    displayPowerRecovery.observe(null, RuntimeStateSnapshot())
                     break
                 }
 
@@ -527,14 +532,14 @@ class MaaHostViewModel(
         if (!manifest.hasGitHubResourceRepository() || _uiState.value.resourceRepositoryUpdating) {
             return
         }
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { current -> current.copy(
             resourceRepositoryUpdating = true,
             resourceRepositoryProgress = PersistentProjectRepositorySyncProgress(
                 fraction = 0f,
                 label = if (force) "正在同步 GitHub 资源" else "正在检查 GitHub 资源",
             ),
-            lastMessage = if (silent) _uiState.value.lastMessage else "正在同步 GitHub 资源",
-        )
+            lastMessage = if (silent) current.lastMessage else "正在同步 GitHub 资源",
+        ) }
         val application = getApplication<Application>()
         val status = runCatching {
             withContext(Dispatchers.IO) {
@@ -565,23 +570,23 @@ class MaaHostViewModel(
             status.available -> "GitHub 资源仓库已就绪"
             else -> "GitHub 资源同步失败：${status.lastError ?: "未知错误"}"
         }
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { current -> current.copy(
             resourceRepository = status,
             resourceRepositoryUpdating = false,
             resourceRepositoryProgress = null,
             lastMessage = nextMessage,
-        )
+        ) }
     }
 
     private fun updateResourceRepositoryProgress(progress: PersistentProjectRepositorySyncProgress) {
-        _uiState.value = _uiState.value.copy(resourceRepositoryProgress = progress)
+        _uiState.update { current -> current.copy(resourceRepositoryProgress = progress) }
     }
 
     private suspend fun clearPersistentResourceRepository() {
         if (!manifest.hasGitHubResourceRepository() || _uiState.value.resourceRepositoryUpdating) {
             return
         }
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { current -> current.copy(
             resourceRepositoryClearConfirmVisible = false,
             resourceRepositoryUpdating = true,
             resourceRepositoryProgress = PersistentProjectRepositorySyncProgress(
@@ -589,7 +594,7 @@ class MaaHostViewModel(
                 label = "正在清空 GitHub 资源缓存",
             ),
             lastMessage = "正在清空 GitHub 资源缓存",
-        )
+        ) }
         val application = getApplication<Application>()
         val status = runCatching {
             withContext(Dispatchers.IO) {
@@ -602,7 +607,7 @@ class MaaHostViewModel(
             )
         }
         refreshCatalogSnapshot(status)
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { current -> current.copy(
             resourceRepository = status,
             resourceRepositoryUpdating = false,
             resourceRepositoryProgress = null,
@@ -611,7 +616,7 @@ class MaaHostViewModel(
             } else {
                 "清空 GitHub 资源失败：${status.lastError}"
             },
-        )
+        ) }
     }
 
     private fun loadCatalogSnapshot(resourceRepository: PersistentProjectRepositoryStatus): CatalogSnapshot {
@@ -661,7 +666,7 @@ class MaaHostViewModel(
         val inputValues = state.taskInputValuesByTask.ifEmpty {
             storedSettings.taskInputValuesByTask
         }
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { current -> current.copy(
             catalog = catalog,
             selectedResourceId = selectedResourceId,
             selectedTaskId = selectedTaskId,
@@ -669,7 +674,7 @@ class MaaHostViewModel(
             taskOptionSelectionsByTask = mergeTaskOptionSelections(catalog.tasks, optionSelections),
             taskInputValuesByTask = mergeTaskInputValues(catalog.tasks, inputValues),
             selectedPresetId = selectedPresetId,
-        )
+        ) }
     }
 
     private fun buildInitialState(
@@ -755,185 +760,6 @@ class MaaHostViewModel(
             selectedByOption = _uiState.value.taskOptionSelectionsByTask[task.id].orEmpty(),
             inputValuesByOption = _uiState.value.taskInputValuesByTask[task.id].orEmpty(),
         )
-    }
-
-    private fun buildOptionOverride(
-        options: List<TaskOptionDescriptor>,
-        selectedByOption: Map<String, Set<String>>,
-        inputValuesByOption: Map<String, Map<String, String>>,
-    ): String? {
-        if (options.isEmpty()) {
-            return null
-        }
-
-        var merged = JsonObject(emptyMap())
-        var hasOverride = false
-        applyOptionOverrides(
-            options = options,
-            selectedByOption = selectedByOption,
-            inputValuesByOption = inputValuesByOption,
-            onMerge = { overrideJson ->
-                val overrideObject = parseOverrideObject(overrideJson) ?: return@applyOptionOverrides
-                merged = mergeJsonObjects(merged, overrideObject)
-                hasOverride = true
-            },
-        )
-        return if (hasOverride) merged.toString() else null
-    }
-
-    private fun applyOptionOverrides(
-        options: List<TaskOptionDescriptor>,
-        selectedByOption: Map<String, Set<String>>,
-        inputValuesByOption: Map<String, Map<String, String>>,
-        onMerge: (String) -> Unit,
-    ) {
-        options.forEach { option ->
-            when (option.type) {
-                TaskOptionType.Switch,
-                TaskOptionType.Select,
-                TaskOptionType.Checkbox -> {
-                    val selectedCaseNames = selectedByOption[option.id].takeUnless { it.isNullOrEmpty() }
-                        ?: TaskOptionSupport.defaultSelectionForOption(option)
-                    option.cases
-                        .filter { it.name in selectedCaseNames }
-                        .forEach { optionCase ->
-                            onMerge(optionCase.pipelineOverrideJson)
-                            applyOptionOverrides(
-                                options = optionCase.nestedOptions,
-                                selectedByOption = selectedByOption,
-                                inputValuesByOption = inputValuesByOption,
-                                onMerge = onMerge,
-                            )
-                        }
-                }
-
-                TaskOptionType.Input -> {
-                    val values = buildInputValues(option, inputValuesByOption[option.id].orEmpty())
-                    onMerge(applyInputPlaceholders(option.pipelineOverrideJson, values))
-                }
-            }
-        }
-    }
-
-    private fun buildInputValues(
-        option: TaskOptionDescriptor,
-        currentValues: Map<String, String>,
-    ): Map<String, PipelineInputValue> {
-        return option.inputs.associate { input ->
-            input.name to PipelineInputValue(
-                value = currentValues[input.name] ?: input.defaultValue,
-                pipelineType = input.pipelineType,
-            )
-        }
-    }
-
-    private fun applyInputPlaceholders(
-        rawJson: String,
-        values: Map<String, PipelineInputValue>,
-    ): String {
-        if (values.isEmpty() || rawJson.isBlank()) {
-            return rawJson
-        }
-        val element = runCatching { json.parseToJsonElement(rawJson) }.getOrNull()
-            ?: return replacePlaceholdersInText(rawJson, values)
-        return replacePlaceholders(element, values).toString()
-    }
-
-    private fun replacePlaceholders(
-        element: JsonElement,
-        values: Map<String, PipelineInputValue>,
-    ): JsonElement {
-        return when (element) {
-            is JsonObject -> buildJsonObject {
-                element.forEach { (key, value) ->
-                    put(key, replacePlaceholders(value, values))
-                }
-            }
-
-            is JsonArray -> buildJsonArray {
-                element.forEach { item ->
-                    add(replacePlaceholders(item, values))
-                }
-            }
-
-            is JsonPrimitive -> {
-                if (!element.isString) {
-                    element
-                } else {
-                    replaceStringPlaceholder(element.content, values)
-                }
-            }
-        }
-    }
-
-    private fun replaceStringPlaceholder(
-        rawValue: String,
-        values: Map<String, PipelineInputValue>,
-    ): JsonElement {
-        val exactMatch = inputPlaceholderRegex.matchEntire(rawValue)
-        if (exactMatch != null) {
-            val key = exactMatch.groupValues[1]
-            values[key]?.let(::toJsonPrimitive)?.let { return it }
-        }
-        return JsonPrimitive(replacePlaceholdersInText(rawValue, values))
-    }
-
-    private fun replacePlaceholdersInText(
-        rawValue: String,
-        values: Map<String, PipelineInputValue>,
-    ): String {
-        return inputPlaceholderRegex.replace(rawValue) { match ->
-            values[match.groupValues[1]]?.value ?: match.value
-        }
-    }
-
-    private fun toJsonPrimitive(value: PipelineInputValue): JsonPrimitive {
-        return when (value.pipelineType.lowercase()) {
-            "int" -> value.value.toLongOrNull()?.let(::JsonPrimitive)
-                ?: value.value.toDoubleOrNull()?.let(::JsonPrimitive)
-                ?: JsonPrimitive(value.value)
-
-            "bool" -> when (value.value.lowercase()) {
-                "true" -> JsonPrimitive(true)
-                "false" -> JsonPrimitive(false)
-                else -> JsonPrimitive(value.value)
-            }
-
-            else -> JsonPrimitive(value.value)
-        }
-    }
-
-    private fun mergeOverrideJson(baseJson: String?, overlayJson: String?): String? {
-        val base = parseOverrideObject(baseJson)
-        val overlay = parseOverrideObject(overlayJson)
-        return when {
-            base == null && overlay == null -> null
-            base == null -> overlay?.toString()
-            overlay == null -> base.toString()
-            else -> mergeJsonObjects(base, overlay).toString()
-        }
-    }
-
-    private fun parseOverrideObject(rawJson: String?): JsonObject? {
-        if (rawJson.isNullOrBlank() || rawJson == "{}") {
-            return null
-        }
-        return runCatching { json.parseToJsonElement(rawJson).jsonObject }.getOrNull()
-    }
-
-    private fun mergeJsonObjects(base: JsonObject, overlay: JsonObject): JsonObject {
-        return buildJsonObject {
-            val keys = base.keys + overlay.keys
-            keys.forEach { key ->
-                val baseValue = base[key]
-                val overlayValue = overlay[key]
-                when {
-                    baseValue is JsonObject && overlayValue is JsonObject -> put(key, mergeJsonObjects(baseValue, overlayValue))
-                    overlayValue != null -> put(key, overlayValue)
-                    baseValue != null -> put(key, baseValue)
-                }
-            }
-        }
     }
 
     private fun validateTaskOptionSelections(tasks: List<TaskDescriptor>, resourceId: String?): String? {
@@ -1030,9 +856,9 @@ class MaaHostViewModel(
             ?: emptyMap()
         val updated = transform(current).filterValues { it.isNotEmpty() }
         val nextSelections = _uiState.value.taskOptionSelectionsByTask + (taskId to updated)
-        _uiState.value = _uiState.value.copy(
+        _uiState.update { current -> current.copy(
             taskOptionSelectionsByTask = nextSelections,
-        )
+        ) }
         settingsRepository.saveTaskOptionSelectionsByTask(nextSelections)
     }
 
@@ -1063,7 +889,7 @@ class MaaHostViewModel(
             ?: manifest.defaultPresetId
                 ?.takeIf { presetId -> state.catalog.presets.any { it.id == presetId } }
             ?: state.catalog.presets.firstOrNull()?.id
-        _uiState.value = state.copy(
+        _uiState.update { current -> current.copy(
             selectedResourceId = selectedResourceId,
             selectedTaskId = selectedTaskId,
             checkedTaskIds = checkedTaskIds,
@@ -1072,7 +898,7 @@ class MaaHostViewModel(
             taskInputValuesByTask = mergeTaskInputValues(state.catalog.tasks, settings.taskInputValuesByTask),
             overrideJson = normalizeOverrideJson(settings.overrideJson),
             logLevel = settings.logLevel,
-        )
+        ) }
     }
 
     private fun persistCurrentSettings() {
@@ -1103,30 +929,32 @@ class MaaHostViewModel(
     ) {
         val client = runtimeClient
         if (client == null) {
-            _uiState.value = _uiState.value.copy(lastMessage = "Root runtime is not connected")
+            _uiState.update { current -> current.copy(lastMessage = "Root runtime is not connected") }
             return
         }
 
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(busy = true, lastMessage = actionName)
+            _uiState.update { current -> current.copy(busy = true, lastMessage = actionName) }
             val result = withContext(Dispatchers.IO) {
                 runCatching { action(client) }
             }
+            if (runtimeClient !== client) return@launch
             result.onSuccess { value ->
                 onSuccess(value)
-                _uiState.value = _uiState.value.copy(busy = false)
+                _uiState.update { current -> current.copy(busy = false) }
             }.onFailure { error ->
                 Log.e(TAG, "Service action failed: $actionName", error)
-                _uiState.value = _uiState.value.copy(
+                _uiState.update { current -> current.copy(
                     busy = false,
                     lastMessage = "$actionName failed: ${error.message}",
-                )
+                ) }
             }
         }
     }
 
     override fun onCleared() {
         pollJob?.cancel()
+        displayPowerRecovery.close()
         runCatching { runtimeClient?.setMonitorSurface(null) }
         session.disconnect(runtimeClient)
         runtimeClient = null
@@ -1141,7 +969,6 @@ class MaaHostViewModel(
         private const val TAG = "MaaHostViewModel"
         private const val POLL_INTERVAL_MS = 1_000L
         private const val MAX_LOG_LINES = 300
-        private val inputPlaceholderRegex = Regex("\\{\\s*([A-Za-z0-9_.-]+)\\s*\\}")
 
         fun visibleTasks(tasks: List<TaskDescriptor>, resourceId: String?): List<TaskDescriptor> {
             return tasks.filter { task ->
@@ -1161,11 +988,6 @@ class MaaHostViewModel(
         val ping: String,
         val snapshot: RuntimeStateSnapshot,
         val logChunk: RuntimeLogChunk,
-    )
-
-    private data class PipelineInputValue(
-        val value: String,
-        val pipelineType: String,
     )
 }
 

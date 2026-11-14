@@ -45,6 +45,11 @@ class MaaHostRuntimeSupportTest {
         )
     }
 
+    @Test
+    fun `host retains AndroidViewModel factory constructor`() {
+        org.junit.Assert.assertNotNull(MaaHostViewModel::class.java.getConstructor(android.app.Application::class.java))
+    }
+
     private fun task(id: String) = TaskDescriptor(
         id = id,
         label = id,

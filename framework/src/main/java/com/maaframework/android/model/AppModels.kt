@@ -137,6 +137,7 @@ data class RuntimeCapabilities(
 
 @Serializable
 data class RuntimeStateSnapshot(
+    val operationId: String? = null,
     val phase: RunSessionPhase = RunSessionPhase.Idle,
     val runtimePrepared: Boolean = false,
     val runtimeRoot: String? = null,

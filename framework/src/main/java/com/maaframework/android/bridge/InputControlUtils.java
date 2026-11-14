@@ -210,6 +210,10 @@ public final class InputControlUtils {
         clearTouchState();
     }
 
+    public static synchronized void cancel() {
+        cancelActiveTouches("remote cancellation", currentDisplayId);
+    }
+
     public static synchronized boolean down(int x, int y, int displayId) {
         return down(0, x, y, displayId);
     }

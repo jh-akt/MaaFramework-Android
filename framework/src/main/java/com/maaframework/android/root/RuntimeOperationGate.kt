@@ -3,6 +3,8 @@ package com.maaframework.android.root
 /** Reserves the runtime until its worker has actually exited, including during stop. */
 internal class RuntimeOperationGate {
     class Operation {
+        val id: String = java.util.UUID.randomUUID().toString()
+        fun checkActive() { if (stopRequested) throw java.util.concurrent.CancellationException("Operation stopped") }
         @Volatile var stopRequested = false
             internal set
     }

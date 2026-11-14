@@ -14,7 +14,7 @@ internal class RepositoryDirectoryTransaction(
 
     fun publish(staging: File, current: File, previous: File) {
         recover(current, previous)
-        check(!previous.exists() || previous.deleteRecursively()) { "Cannot remove old repository backup" }
+        deleteTreeNoFollow(previous)
         val hadCurrent = current.exists()
         if (hadCurrent) {
             check(move(current, previous)) { "Cannot back up current resource repository" }

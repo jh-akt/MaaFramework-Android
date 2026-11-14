@@ -1,15 +1,12 @@
 package com.maaframework.android.root;
 
-import android.os.Binder;
 import android.os.IBinder;
 import android.os.Looper;
-import android.os.Parcel;
 import android.util.Log;
 
 public final class RootServiceStarter {
 
     private static final String TAG = "RootServiceStarter";
-    private static final int DESTROY_TRANSACTION_CODE = 16777115;
 
     private RootServiceStarter() {
     }
@@ -48,8 +45,14 @@ public final class RootServiceStarter {
         try {
             lifecycleBinder.linkToDeath(() -> {
                 Log.i(TAG, "App process died, destroying root runtime");
+                // A blocked native call cannot indefinitely retain an orphan process.
+                Thread watchdog = new Thread(() -> {
+                    android.os.SystemClock.sleep(30_000);
+                    android.os.Process.killProcess(android.os.Process.myPid());
+                }, "maa-orphan-watchdog");
+                watchdog.setDaemon(true);
+                watchdog.start();
                 destroyService(createdService.service());
-                System.exit(0);
             }, 0);
             return true;
         } catch (Throwable tr) {
@@ -63,19 +66,10 @@ public final class RootServiceStarter {
             return;
         }
 
-        Parcel data = Parcel.obtain();
-        Parcel reply = Parcel.obtain();
         try {
-            String descriptor = service.getInterfaceDescriptor();
-            if (descriptor != null) {
-                data.writeInterfaceToken(descriptor);
-            }
-            service.transact(DESTROY_TRANSACTION_CODE, data, reply, Binder.FLAG_ONEWAY);
-        } catch (Throwable tr) {
-            Log.w(TAG, "destroy root runtime failed", tr);
-        } finally {
-            data.recycle();
-            reply.recycle();
+            com.maaframework.android.ipc.IRootRuntimeService.Stub.asInterface(service).destroy();
+        } catch (Throwable error) {
+            Log.w(TAG, "destroy root runtime failed", error);
         }
     }
 }
