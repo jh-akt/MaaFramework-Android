@@ -79,6 +79,8 @@ internal class ReleasePayloadExtractor(private val config: GitHubReleaseConfig) 
             val file = safePayloadFile(destination, it)
             require(file.isFile && file.length() > 0) { "Release component missing: $it" }
         }
-        config.executablePaths.forEach { require(safePayloadFile(destination, it).setExecutable(true, false)) { "Cannot make runtime executable: $it" } }
+        // External Android storage may reject chmod. This is only the download cache;
+        // RuntimeBootstrapper applies executable bits after copying onto the private runtime filesystem.
+        config.executablePaths.forEach { require(safePayloadFile(destination, it).isFile) { "Missing executable: $it" } }
     }
 }

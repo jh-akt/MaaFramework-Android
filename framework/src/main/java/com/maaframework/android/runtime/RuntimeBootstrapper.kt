@@ -71,6 +71,11 @@ object RuntimeBootstrapper {
                 if (!includesRuntime && assetEntryExists(assets, "bundled_runtime")) {
                     copyAssetEntry(assets, "bundled_runtime", staging, logger, checkCancelled)
                 }
+                if (includesRuntime) {
+                    manifest.githubRelease?.executablePaths.orEmpty().forEach { path ->
+                        check(safePayloadFile(staging, path).setExecutable(true, false)) { "Cannot make runtime executable: $path" }
+                    }
+                }
                 checkCancelled()
                 overlayBundledPrivatePipeline(staging, logger)
                 seedPythonAgentDeployVersion(staging, logger)
