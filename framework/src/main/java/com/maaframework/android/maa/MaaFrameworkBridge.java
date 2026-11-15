@@ -617,15 +617,22 @@ public final class MaaFrameworkBridge {
     }
 
     private String buildAgentLibraryPath(RuntimeAgentResolver.AgentRuntime agentRuntime) {
-        ArrayList<String> paths = new ArrayList<>();
-        addDirectoryIfExists(paths, new File(runtimeRootDir, "maafw"));
+        return buildAgentLibraryPath(runtimeRootDir, findPythonHome(agentRuntime), System.getenv("LD_LIBRARY_PATH"));
+    }
 
-        File pythonHome = findPythonHome(agentRuntime);
+    static String buildAgentLibraryPath(File runtimeRoot, File pythonHome, String inherited) {
+        ArrayList<String> paths = new ArrayList<>();
+        addDirectoryIfExists(paths, new File(runtimeRoot, "maafw"));
+
         if (pythonHome != null) {
             addDirectoryIfExists(paths, new File(pythonHome, "lib"));
+            File sitePackages = findPythonSitePackages(pythonHome);
+            if (sitePackages != null) {
+                // Android wheels such as Pillow keep their shared dependencies here.
+                addDirectoryIfExists(paths, new File(sitePackages, "chaquopy/lib"));
+            }
         }
 
-        String inherited = System.getenv("LD_LIBRARY_PATH");
         if (inherited != null && !inherited.isBlank()) {
             paths.add(inherited);
         }
@@ -678,7 +685,7 @@ public final class MaaFrameworkBridge {
         return bundled.isDirectory() ? bundled : null;
     }
 
-    private File findPythonSitePackages(File pythonHome) {
+    private static File findPythonSitePackages(File pythonHome) {
         File lib = new File(pythonHome, "lib");
         File[] children = lib.listFiles();
         if (children == null) {
