@@ -1,6 +1,6 @@
 # MaaFramework Android 实现说明
 
-这份文档聚焦当前 `/Users/haojiang/Code/MaaFramework-Android` 的实现结构，目标不是重复 README，而是把“框架怎么工作”整理成一份可维护的实现笔记，方便后续继续抽象、接新项目或排查运行问题。
+这份文档聚焦当前 `MaaFramework-Android/` 的实现结构，目标不是重复 README，而是把“框架怎么工作”整理成一份可维护的实现笔记，方便后续继续抽象、接新项目或排查运行问题。
 
 ## 1. 目标和当前抽象边界
 

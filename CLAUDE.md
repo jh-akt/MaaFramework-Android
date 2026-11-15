@@ -9,7 +9,7 @@ This is the primary agent guidance file for this repository. Read this file befo
 Current sibling host apps:
 
 ```text
-/Users/haojiang/Code/
+../
   MaaFramework-Android/   # source of truth for reusable framework code
   Maa-bbb-Android/        # Maa_bbb host app, references this repo as submodule
   MaaEnd-Android/         # MaaEnd host app, references this repo as submodule
@@ -87,30 +87,24 @@ When a host app shows raw option keys, inspect the upstream resource JSON and lo
 Known working framework verification command:
 
 ```bash
-JAVA_HOME="/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home" \
-PATH="/opt/homebrew/opt/openjdk@21/bin:$PATH" \
-ANDROID_SDK_ROOT="$HOME/Library/Android/sdk" \
-ANDROID_HOME="$HOME/Library/Android/sdk" \
+: "${JAVA_HOME:?Set JAVA_HOME to your JDK 21 installation}"
+: "${ANDROID_HOME:?Set ANDROID_HOME to your Android SDK}"
 ./gradlew :framework:testDebugUnitTest
 ```
 
 To verify Maa-bbb after framework changes, run from `../Maa-bbb-Android`:
 
 ```bash
-JAVA_HOME="/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home" \
-PATH="/opt/homebrew/opt/openjdk@21/bin:$PATH" \
-ANDROID_SDK_ROOT="$HOME/Library/Android/sdk" \
-ANDROID_HOME="$HOME/Library/Android/sdk" \
+: "${JAVA_HOME:?Set JAVA_HOME to your JDK 21 installation}"
+: "${ANDROID_HOME:?Set ANDROID_HOME to your Android SDK}"
 ./gradlew :app:assembleDebug
 ```
 
 To verify MaaEnd after framework changes, run from `../MaaEnd-Android`:
 
 ```bash
-JAVA_HOME="/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home" \
-PATH="/opt/homebrew/opt/openjdk@21/bin:$PATH" \
-ANDROID_SDK_ROOT="$HOME/Library/Android/sdk" \
-ANDROID_HOME="$HOME/Library/Android/sdk" \
+: "${JAVA_HOME:?Set JAVA_HOME to your JDK 21 installation}"
+: "${ANDROID_HOME:?Set ANDROID_HOME to your Android SDK}"
 sh ./gradlew :app:assembleDebug
 ```
 

@@ -17,7 +17,7 @@ Use `tools/prepare_android_runtime.py` to assemble local runtime contents:
 ```bash
 python3 tools/prepare_android_runtime.py \
   --project-root ../Maa_bbb \
-  --maafw-dir /path/to/android/maafw \
+  --maafw-dir .cache/android/maafw \
   --clear
 ```
 
@@ -26,9 +26,9 @@ Optional Python runtime inputs:
 ```bash
 python3 tools/prepare_android_runtime.py \
   --project-root ../Maa_bbb \
-  --maafw-dir /path/to/android/maafw \
-  --python-android-archive /path/to/python-android-arm64.tar.gz \
-  --python-wheel /path/to/maa_whl_file.whl \
+  --maafw-dir .cache/android/maafw \
+  --python-android-archive .cache/python-android-arm64.tar.gz \
+  --python-wheel .cache/maa_whl_file.whl \
   --include-python-shims \
   --clear
 ```
@@ -46,7 +46,11 @@ Default output:
 - `dist/maaframework-android-runtime-arm64-v8a.zip`
 - `dist/maaframework-android-runtime-arm64-v8a.zip.sha256`
 
-The zip root contains `agent/`, `maafw/`, `python/` and `runtime-manifest.json` directly. Host apps can download and unpack this asset during Gradle builds.
+The zip root contains `agent/`, `maafw/`, `python/` and a newly generated
+`runtime-package.json`. Staging manifests are excluded because older releases can
+contain paths from the build machine. The host's Gradle plugin also excludes those
+diagnostic manifests when bundling legacy runtime archives into an APK. Host apps
+can download and unpack the archive during Gradle builds.
 
 ## Publish
 

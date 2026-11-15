@@ -1,7 +1,7 @@
 # MaaFramework Android Session Summary
 
 Date: 2026-04-24
-Workspace: `/Users/haojiang/Code/MaaFramework-Android`  
+Workspace: `MaaFramework-Android/`
 Reference repos:
 
 - source extraction baseline: sibling `../MaaEnd-Android`
@@ -61,10 +61,8 @@ Update 2026-04-26: Maa_bbb 的 Android 宿主应用已经拆到同级 `../Maa-bb
 构建命令：
 
 ```bash
-JAVA_HOME="/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home" \
-PATH="/opt/homebrew/opt/openjdk@21/bin:$PATH" \
-ANDROID_SDK_ROOT="$HOME/Library/Android/sdk" \
-ANDROID_HOME="$HOME/Library/Android/sdk" \
+: "${JAVA_HOME:?Set JAVA_HOME to your JDK 21 installation}"
+: "${ANDROID_HOME:?Set ANDROID_HOME to your Android SDK}"
 ./gradlew :framework:testDebugUnitTest :app:assembleDebug
 ```
 

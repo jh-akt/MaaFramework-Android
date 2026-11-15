@@ -12,6 +12,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_RUNTIME_DIR = PROJECT_ROOT / "runtime"
 DEFAULT_OUTPUT = PROJECT_ROOT / "dist" / "maaframework-android-runtime-arm64-v8a.zip"
 EXCLUDED_NAMES = {".DS_Store"}
+EXCLUDED_METADATA = {"runtime-manifest.json", "runtime-package.json"}
 
 
 def iter_runtime_files(runtime_dir: Path) -> list[Path]:
@@ -19,6 +20,7 @@ def iter_runtime_files(runtime_dir: Path) -> list[Path]:
         path
         for path in runtime_dir.rglob("*")
         if path.is_file() and path.name not in EXCLUDED_NAMES
+        and path.relative_to(runtime_dir).as_posix() not in EXCLUDED_METADATA
     )
 
 

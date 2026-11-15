@@ -122,6 +122,9 @@ private fun Project.configureRuntimeBundling(extension: MaaRuntimeExtension) {
         dependsOn(resolveTask)
         from(resolvedRuntimeDir)
         into(generatedAssetsDir.map { it.dir("bundled_runtime") })
+        // Legacy release manifests contain paths from the build machine. They are
+        // diagnostic staging files, not inputs consumed by the Android runtime.
+        exclude("runtime-manifest.json", "runtime-package.json")
         includeEmptyDirs = true
     }
     val prepareJni = tasks.register<Sync>("prepareBundledRuntimeJniLibs") {
