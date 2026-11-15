@@ -11,6 +11,9 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
+import com.maaframework.android.host.MaaHostPolicy
 import com.maaframework.android.host.MaaHostUiConfig
 import com.maaframework.android.host.MaaHostViewModel
 import com.maaframework.android.host.hostActions
@@ -20,7 +23,22 @@ import kotlinx.coroutines.launch
 /** Default host UI, lifecycle and foreground update policy. Apps provide only branding. */
 abstract class MaaHostActivity : ComponentActivity() {
     protected abstract val hostVersionName: String
-    private val viewModel: MaaHostViewModel by viewModels()
+    protected open val hostPreferencesName: String? = null
+    protected open val hostPolicy: MaaHostPolicy = MaaHostPolicy()
+    protected open fun hostUiConfig(appName: String) = MaaHostUiConfig(
+        appName = appName,
+        versionName = hostVersionName,
+        policy = hostPolicy,
+        showSharedOptions = true,
+    )
+
+    private val viewModel: MaaHostViewModel by viewModels {
+        viewModelFactory {
+            initializer {
+                MaaHostViewModel(application, preferencesName = hostPreferencesName, taskPolicy = hostPolicy)
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -36,7 +54,7 @@ abstract class MaaHostActivity : ComponentActivity() {
             val state by viewModel.uiState.collectAsStateWithLifecycle()
             val actions = remember(viewModel) { viewModel.hostActions() }
             MaaHostTheme {
-                MaaHostApp(state, actions, MaaHostUiConfig(appName = state.manifest.displayName, versionName = hostVersionName))
+                MaaHostApp(state, actions, hostUiConfig(state.manifest.displayName))
             }
         }
     }

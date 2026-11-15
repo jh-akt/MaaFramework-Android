@@ -7,6 +7,15 @@ Use `Theme.MaaFrameworkAndroid.Host` for the Activity theme. Custom hosts can ke
 using `MaaHostApp`, `MaaHostTheme` and `MaaHostViewModel`; call `onHostStarted()` and
 `onHostStopped()` to enable the same foreground update schedule.
 
+When migrating an existing app, override `hostPreferencesName` with its original
+SharedPreferences name. Legacy task/preset keys and v1 configuration exports are
+accepted by the shared settings store. `hostPolicy` controls both display order
+and task/preset execution, including any required opening task. Override
+`hostUiConfig(appName)` only for project-specific screen options, such as hiding
+the manual override editor. Global and resource options are edited and persisted
+by the shared host; their values are applied before task options and manual
+overrides. Values belonging to other resource scopes remain separate.
+
 ## Update policy
 
 The shared settings toggle defaults to on. While the host is open, it checks every
@@ -16,6 +25,12 @@ off stops future automatic checks, not a download already in progress. This is
 foreground automatic updating, not a background job that wakes a closed app.
 No account or GitHub token is required for public releases; rate-limit and network
 errors are shown without replacing the last usable payload.
+
+The same schedule also supports `github_resource_repository`: it downloads the
+configured source revision and pinned submodules, applies copy mappings and any
+`local_overlay_path`, then publishes the resource snapshot. This mode updates
+project resources and source agents; the Android runtime stays the version bundled
+in the host APK. Use the release mode below for matched resource/runtime updates.
 
 `github_release` in `maa_project_manifest.json` selects exactly one asset from the
 latest stable GitHub release using `asset_pattern`. Applications may supply

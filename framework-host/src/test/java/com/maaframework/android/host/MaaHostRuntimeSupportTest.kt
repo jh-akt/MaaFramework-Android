@@ -50,6 +50,20 @@ class MaaHostRuntimeSupportTest {
         org.junit.Assert.assertNotNull(MaaHostViewModel::class.java.getConstructor(android.app.Application::class.java))
     }
 
+    @Test fun `policy never duplicates open game and preserves selected sequence`() {
+        val open = task("AndroidOpenGame")
+        val daily = task("DailyRewards")
+        val visit = task("VisitFriends")
+        assertEquals(listOf(open, visit, daily), MaaHostPolicies.MaaEnd.buildSequence(listOf(visit, open, daily)))
+        assertEquals(emptyList<TaskDescriptor>(), MaaHostPolicies.MaaEnd.buildSequence(emptyList(), listOf(open)))
+    }
+
+    @Test fun `ADB compatibility ordering takes precedence over product pins`() {
+        val unsupported = task("AndroidOpenGame").copy(controllerSupported = false)
+        val daily = task("DailyRewards")
+        assertEquals(listOf(daily, unsupported), MaaHostPolicies.MaaEnd.orderedTasks(listOf(unsupported, daily)))
+    }
+
     private fun task(id: String) = TaskDescriptor(
         id = id,
         label = id,

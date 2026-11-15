@@ -42,6 +42,7 @@ open class MaaHostViewModel @JvmOverloads constructor(
     application: Application,
     preferencesName: String? = null,
     displayPowerPolicy: MaaDisplayPowerPolicy = MaaDisplayPowerPolicy(),
+    private val taskPolicy: MaaHostPolicy = MaaHostPolicy(),
 ) : AndroidViewModel(application) {
     private val manifest = MaaProjectManifestLoader.loadOrDefault(application.assets)
     private val catalogLoader = InterfaceCatalogLoader(application.assets, manifest.supportedControllers, manifest.bundledResourcePath.orEmpty())
@@ -118,8 +119,51 @@ open class MaaHostViewModel @JvmOverloads constructor(
         return true
     }
 
+    private fun visibleHostTasks(tasks: List<TaskDescriptor>, resourceId: String?) =
+        taskPolicy.orderedTasks(taskPolicy.visibleTasks(tasks, resourceId))
+
+    fun updateSharedSwitchOption(scopeId: String, optionId: String, caseName: String) {
+        updateSharedSelections(scopeId) { it + (optionId to setOf(caseName)) }
+    }
+
+    fun toggleSharedCheckboxOption(scopeId: String, optionId: String, caseName: String) {
+        updateSharedSelections(scopeId) { selections ->
+            val selected = selections[optionId].orEmpty()
+            selections + (optionId to if (caseName in selected) selected - caseName else selected + caseName)
+        }
+    }
+
+    private fun updateSharedSelections(scopeId: String, transform: (Map<String, Set<String>>) -> Map<String, Set<String>>) {
+        _uiState.update { current ->
+            val selections = transform(current.sharedOptionSelectionsByScope[scopeId].orEmpty())
+            current.copy(sharedOptionSelectionsByScope = current.sharedOptionSelectionsByScope + (scopeId to selections))
+        }
+        settingsRepository.saveSharedOptionSelectionsByScope(_uiState.value.sharedOptionSelectionsByScope)
+    }
+
+    fun updateSharedInputValue(scopeId: String, optionId: String, inputName: String, value: String) {
+        _uiState.update { current ->
+            val scope = current.sharedInputValuesByScope[scopeId].orEmpty()
+            val values = scope[optionId].orEmpty() + (inputName to value)
+            current.copy(sharedInputValuesByScope = current.sharedInputValuesByScope + (scopeId to (scope + (optionId to values))))
+        }
+        settingsRepository.saveSharedInputValuesByScope(_uiState.value.sharedInputValuesByScope)
+    }
+
+    private fun mergeSharedSelections(catalog: CatalogSnapshot, stored: Map<String, Map<String, Set<String>>>) =
+        stored + MaaHostSharedOptions.scopes(catalog).mapValues { (scope, options) ->
+            buildDefaultSelectionsForOptions(options) + stored[scope].orEmpty()
+        }
+
+    private fun mergeSharedInputs(catalog: CatalogSnapshot, stored: Map<String, Map<String, Map<String, String>>>) =
+        stored + MaaHostSharedOptions.scopes(catalog).mapValues { (scope, options) ->
+            buildDefaultInputValuesForOptions(options).toMutableMap().apply {
+                stored[scope].orEmpty().forEach { (option, values) -> put(option, get(option).orEmpty() + values) }
+            }.toMap()
+        }
+
     fun selectResource(resourceId: String) {
-        val visibleTasks = visibleTasks(_uiState.value.catalog.tasks, resourceId)
+        val visibleTasks = visibleHostTasks(_uiState.value.catalog.tasks, resourceId)
         val selectedTaskId = _uiState.value.selectedTaskId
             ?.takeIf { taskId -> visibleTasks.any { it.id == taskId } }
             ?: visibleTasks.firstOrNull()?.id
@@ -348,7 +392,7 @@ open class MaaHostViewModel @JvmOverloads constructor(
 
     fun startSelectedTask() {
         val state = _uiState.value
-        val visibleTasks = visibleTasks(state.catalog.tasks, state.selectedResourceId)
+        val visibleTasks = visibleHostTasks(state.catalog.tasks, state.selectedResourceId)
         val requestedTaskIds = visibleTasks
             .map { it.id }
             .filterTo(mutableListOf()) { it in state.checkedTaskIds }
@@ -362,9 +406,10 @@ open class MaaHostViewModel @JvmOverloads constructor(
             _uiState.update { current -> current.copy(lastMessage = "Select a task first") }
             return
         }
-        val requestedTasks = requestedTaskIds.mapNotNull { taskId ->
+        val requestedTasks = taskPolicy.buildSequence(requestedTaskIds.mapNotNull { taskId ->
             visibleTasks.firstOrNull { it.id == taskId }
-        }
+        }, visibleTasks)
+        val sequenceTaskIds = requestedTasks.map { it.id }
         val validationError = validateTaskOptionSelections(requestedTasks, state.selectedResourceId)
         if (validationError != null) {
             _uiState.update { current -> current.copy(lastMessage = validationError) }
@@ -372,8 +417,8 @@ open class MaaHostViewModel @JvmOverloads constructor(
         }
 
         val request = RunRequest(
-            taskId = requestedTaskIds.first(),
-            sequenceTaskIds = requestedTaskIds,
+            taskId = sequenceTaskIds.first(),
+            sequenceTaskIds = sequenceTaskIds,
             resourceName = state.selectedResourceId ?: manifest.defaultResourceId.orEmpty(),
             logLevel = state.logLevel,
             optionOverridesByTask = buildOverrideMap(
@@ -383,10 +428,10 @@ open class MaaHostViewModel @JvmOverloads constructor(
                 overrideJson = state.overrideJson,
             ),
         )
-        val label = if (requestedTaskIds.size == 1) {
-            "Starting task ${requestedTaskIds.first()}"
+        val label = if (sequenceTaskIds.size == 1) {
+            "Starting task ${sequenceTaskIds.first()}"
         } else {
-            "Starting ${requestedTaskIds.size} tasks"
+            "Starting ${sequenceTaskIds.size} tasks"
         }
         startRun(request, label)
     }
@@ -399,10 +444,10 @@ open class MaaHostViewModel @JvmOverloads constructor(
             return
         }
 
-        val visibleTasks = visibleTasks(state.catalog.tasks, state.selectedResourceId)
-        val requestedTasks = preset.taskIds.mapNotNull { taskId ->
+        val visibleTasks = visibleHostTasks(state.catalog.tasks, state.selectedResourceId)
+        val requestedTasks = taskPolicy.buildSequence(preset.taskIds.mapNotNull { taskId ->
             visibleTasks.firstOrNull { it.id == taskId }
-        }
+        }, visibleTasks)
         if (requestedTasks.isEmpty()) {
             _uiState.update { current -> current.copy(lastMessage = "Preset ${preset.label} has no tasks for the selected resource") }
             return
@@ -699,7 +744,7 @@ open class MaaHostViewModel @JvmOverloads constructor(
             ?: storedSettings.selectedResourceId?.takeIf { resourceId -> catalog.resources.any { it.id == resourceId } }
             ?: manifest.defaultResourceId?.takeIf { resourceId -> catalog.resources.any { it.id == resourceId } }
             ?: catalog.resources.firstOrNull()?.id
-        val visibleTasks = visibleTasks(catalog.tasks, selectedResourceId)
+        val visibleTasks = visibleHostTasks(catalog.tasks, selectedResourceId)
         val selectedTaskId = state.selectedTaskId
             ?.takeIf { taskId -> visibleTasks.any { it.id == taskId } }
             ?: storedSettings.selectedTaskId?.takeIf { taskId -> visibleTasks.any { it.id == taskId } }
@@ -729,6 +774,8 @@ open class MaaHostViewModel @JvmOverloads constructor(
             checkedTaskIds = checkedTaskIds,
             taskOptionSelectionsByTask = mergeTaskOptionSelections(catalog.tasks, optionSelections),
             taskInputValuesByTask = mergeTaskInputValues(catalog.tasks, inputValues),
+            sharedOptionSelectionsByScope = mergeSharedSelections(catalog, current.sharedOptionSelectionsByScope.ifEmpty { storedSettings.sharedOptionSelectionsByScope }),
+            sharedInputValuesByScope = mergeSharedInputs(catalog, current.sharedInputValuesByScope.ifEmpty { storedSettings.sharedInputValuesByScope }),
             selectedPresetId = selectedPresetId,
         ) }
     }
@@ -744,7 +791,7 @@ open class MaaHostViewModel @JvmOverloads constructor(
             ?.takeIf { resourceId -> catalog.resources.any { it.id == resourceId } }
             ?: manifest.defaultResourceId?.takeIf { resourceId -> catalog.resources.any { it.id == resourceId } }
             ?: catalog.resources.firstOrNull()?.id
-        val visibleTasks = visibleTasks(catalog.tasks, selectedResourceId)
+        val visibleTasks = visibleHostTasks(catalog.tasks, selectedResourceId)
         val selectedTaskId = settings.selectedTaskId
             ?.takeIf { taskId -> visibleTasks.any { it.id == taskId } }
             ?: manifest.defaultTaskId?.takeIf { taskId -> visibleTasks.any { it.id == taskId } }
@@ -769,6 +816,8 @@ open class MaaHostViewModel @JvmOverloads constructor(
             checkedTaskIds = checkedTaskIds,
             taskOptionSelectionsByTask = taskOptionSelectionsByTask,
             taskInputValuesByTask = taskInputValuesByTask,
+            sharedOptionSelectionsByScope = mergeSharedSelections(catalog, settings.sharedOptionSelectionsByScope),
+            sharedInputValuesByScope = mergeSharedInputs(catalog, settings.sharedInputValuesByScope),
             selectedPresetId = selectedPresetId,
             overrideJson = normalizeOverrideJson(settings.overrideJson),
             logLevel = settings.logLevel,
@@ -795,12 +844,7 @@ open class MaaHostViewModel @JvmOverloads constructor(
         val manualOverrideTarget = selectedTaskId?.takeIf { taskId -> tasks.any { it.id == taskId } }
             ?: tasks.firstOrNull()?.id
 
-        val catalog = _uiState.value.catalog
-        val sharedDefaults = buildOptionOverride(
-            options = catalog.globalOptions + catalog.resources.firstOrNull { it.id == resourceId }?.options.orEmpty(),
-            selectedByOption = emptyMap(),
-            inputValuesByOption = emptyMap(),
-        )
+        val sharedDefaults = MaaHostSharedOptions.buildOverride(_uiState.value, resourceId)
         return tasks.mapNotNull { task ->
             val taskOverride = mergeOverrideJson(sharedDefaults, buildTaskOptionOverride(task, resourceId))
             val merged = mergeOverrideJson(
@@ -821,6 +865,7 @@ open class MaaHostViewModel @JvmOverloads constructor(
 
     private fun validateTaskOptionSelections(tasks: List<TaskDescriptor>, resourceId: String?): String? {
         TaskOptionSupport.unsupportedTaskMessage(tasks)?.let { return it }
+        MaaHostSharedOptions.validationError(_uiState.value, resourceId)?.let { return it }
         tasks.forEach { task ->
             val errors = TaskOptionSupport.collectInputValidationErrors(
                 options = TaskOptionSupport.filterOptionsForResource(task.options, resourceId),
@@ -929,7 +974,7 @@ open class MaaHostViewModel @JvmOverloads constructor(
             ?: manifest.defaultResourceId
                 ?.takeIf { resourceId -> state.catalog.resources.any { it.id == resourceId } }
             ?: state.catalog.resources.firstOrNull()?.id
-        val visibleTasks = visibleTasks(state.catalog.tasks, selectedResourceId)
+        val visibleTasks = visibleHostTasks(state.catalog.tasks, selectedResourceId)
         val selectedTaskId = settings.selectedTaskId
             ?.takeIf { taskId -> visibleTasks.any { it.id == taskId } }
             ?: state.selectedTaskId
@@ -954,6 +999,8 @@ open class MaaHostViewModel @JvmOverloads constructor(
             selectedPresetId = selectedPresetId,
             taskOptionSelectionsByTask = mergeTaskOptionSelections(state.catalog.tasks, settings.taskOptionSelectionsByTask),
             taskInputValuesByTask = mergeTaskInputValues(state.catalog.tasks, settings.taskInputValuesByTask),
+            sharedOptionSelectionsByScope = mergeSharedSelections(state.catalog, settings.sharedOptionSelectionsByScope),
+            sharedInputValuesByScope = mergeSharedInputs(state.catalog, settings.sharedInputValuesByScope),
             overrideJson = normalizeOverrideJson(settings.overrideJson),
             logLevel = settings.logLevel,
             autoUpdateResources = settings.autoUpdateResources,
@@ -973,6 +1020,8 @@ open class MaaHostViewModel @JvmOverloads constructor(
             checkedTaskIds = state.checkedTaskIds,
             taskOptionSelectionsByTask = state.taskOptionSelectionsByTask,
             taskInputValuesByTask = state.taskInputValuesByTask,
+            sharedOptionSelectionsByScope = state.sharedOptionSelectionsByScope,
+            sharedInputValuesByScope = state.sharedInputValuesByScope,
             overrideJson = normalizeOverrideJson(state.overrideJson),
             logLevel = state.logLevel,
         )
@@ -1062,6 +1111,9 @@ fun MaaHostViewModel.hostActions() = MaaHostActions(
     toggleTaskCheckboxOption = ::toggleTaskCheckboxOption,
     updateTaskInputValue = ::updateTaskInputValue,
     updateAutoUpdateResources = ::updateAutoUpdateResources,
+    updateSharedSwitchOption = ::updateSharedSwitchOption,
+    toggleSharedCheckboxOption = ::toggleSharedCheckboxOption,
+    updateSharedInputValue = ::updateSharedInputValue,
     refreshResourceRepository = ::refreshResourceRepository,
     requestClearResourceRepositoryConfirmation = ::requestClearResourceRepositoryConfirmation,
     dismissClearResourceRepositoryConfirmation = ::dismissClearResourceRepositoryConfirmation,
