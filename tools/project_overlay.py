@@ -73,13 +73,17 @@ def apply_overlay(root, overlay):
     for op in manifest['operations']:
         kind = op['op']
         if kind == 'json_nodes':
+            matched_nodes = 0
             for file in root.rglob('*.json'):
                 if not re.fullmatch(op['files'], file.relative_to(root).as_posix()):
                     continue
                 before = json.loads(file.read_text(encoding='utf-8-sig'))
+                matched_nodes += len(before.keys() & op['value'].keys())
                 after = {name: merge(node, op['value'][name]) if name in op['value'] else node for name, node in before.items()}
                 if before != after:
                     file.write_text(json.dumps(after, ensure_ascii=False, indent=2) + '\n')
+            if not matched_nodes:
+                raise ValueError(f'Overlay node selector matched nothing: {op["files"]}')
             continue
         file = safe_file(root, op['file'])
         file.parent.mkdir(parents=True, exist_ok=True)

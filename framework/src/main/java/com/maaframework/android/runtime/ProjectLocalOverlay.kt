@@ -27,12 +27,15 @@ class ProjectLocalOverlay(private val readAsset: (String) -> ByteArray) {
             val kind = op.getValue("op").jsonPrimitive.content
             if (kind == "json_nodes") {
                 val pattern = Regex(op.getValue("files").jsonPrimitive.content)
+                var matchedNodes = 0
                 root.walkTopDown().filter { it.isFile && pattern.matches(it.relativeTo(root).invariantSeparatorsPath) }.forEach { file ->
                     val before = json.parseToJsonElement(file.readText().removePrefix("\uFEFF")).jsonObject
                     val patches = op.getValue("value").jsonObject
+                    matchedNodes += before.keys.count { it in patches }
                     val after = JsonObject(before.mapValues { (name, node) -> patches[name]?.let { merge(node, it, false) } ?: node })
                     if (after != before) file.writeText(json.encodeToString(JsonElement.serializer(), after) + "\n")
                 }
+                require(matchedNodes > 0) { "Overlay node selector matched nothing: $pattern" }
                 return@forEach
             }
             val file = safePayloadFile(root, op.getValue("file").jsonPrimitive.content)

@@ -93,6 +93,18 @@ class ReleaseUpdateTest {
         assertTrue(runCatching { ReleaseAsset.parse(json, "no-matching-apk") }.isFailure)
     }
 
+    @Test fun `digest mismatch cannot replace a working installation`() {
+        val base = temp.newFolder(); File(base, "current").mkdir(); File(base, "current/interface.json").writeText("working")
+        val bytes = archive(); val metadata = release(bytes)
+        val corrupted = bytes.copyOf().also { it[20] = (it[20].toInt() xor 1).toByte() }
+        val updater = GitHubReleaseUpdater(config(), base, overlay(), {}, {}, { url ->
+            connection(url, if (url.endsWith("latest")) metadata.toByteArray() else corrupted)
+        })
+        val failure = runCatching { updater.update(PersistentProjectRepositoryStatus()) }.exceptionOrNull()
+        assertTrue(failure?.message.orEmpty().contains("SHA-256"))
+        assertEquals("working", File(base, "current/interface.json").readText())
+    }
+
     @Test fun `nested zip traversal and user config are rejected`() {
         listOf("../escape", "config/account.json", "/absolute", "a/../../escape").forEach { name ->
             val file = temp.newFile(); file.writeBytes(zip("assets/pi.zip" to zip(name to byteArrayOf(1))))
@@ -105,6 +117,11 @@ class ReleaseUpdateTest {
         val mismatch = config().copy(checks = listOf(ReleaseJsonCheck("interface.json", emptyList(), JsonPrimitive("wrong"))))
         assertTrue(runCatching { ReleasePayloadExtractor(mismatch).extract(file, temp.newFolder(), temp.newFolder()) }.isFailure)
         assertTrue(runCatching { ReleasePayloadExtractor(config().copy(maxExpandedBytes = 1)).extract(file, temp.newFolder(), temp.newFolder()) }.isFailure)
+    }
+
+    @Test fun `pipeline node overlay rejects an upstream layout with no matches`() {
+        val patch = """{"version":1,"operations":[{"op":"json_nodes","files":"resource/.*","value":{"known-node":{"timeout":123}}}]}"""
+        assertTrue(runCatching { ProjectLocalOverlay { patch.toByteArray() }.apply(temp.newFolder()) }.isFailure)
     }
 
     @Test fun `optional actual release and app overlay smoke test`() {
