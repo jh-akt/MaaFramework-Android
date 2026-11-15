@@ -143,7 +143,7 @@ private fun Project.configureRuntimeBundling(extension: MaaRuntimeExtension) {
         androidResources.ignoreAssetsPattern = "!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~"
         // These upstream ELF files have additional LOAD segments. NDK strip rewrites their
         // offsets without preserving virtual-address congruence; package the originals.
-        packaging.jniLibs.keepDebugSymbols += setOf("**/libfastdeploy_ppocr.so", "**/libopencv_world4.so")
+        packaging.jniLibs.keepDebugSymbols += setOf("**/libfastdeploy_ppocr.so", "**/libopencv_world4.so", "**/libncnn.so")
         sourceSets.getByName("main").assets.srcDir(generatedAssetsDir)
         sourceSets.getByName("main").jniLibs.srcDir(generatedJniLibsDir)
     }
