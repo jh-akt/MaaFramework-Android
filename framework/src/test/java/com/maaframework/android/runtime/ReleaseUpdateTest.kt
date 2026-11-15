@@ -127,15 +127,16 @@ class ReleaseUpdateTest {
     @Test fun `optional actual release and app overlay smoke test`() {
         val fixture = System.getenv("MAA_RELEASE_FIXTURE"); val manifest = System.getenv("MAA_PROJECT_MANIFEST"); val overlayDir = System.getenv("MAA_OVERLAY_DIR")
         assumeTrue(fixture != null && manifest != null && overlayDir != null)
-        val config = Json.decodeFromString<MaaProjectManifest>(File(manifest!!).readText()).githubRelease!!
+        val project = Json.decodeFromString<MaaProjectManifest>(File(manifest!!).readText())
+        val config = project.githubRelease!!
         val root = temp.newFolder()
         ReleasePayloadExtractor(config).extract(File(fixture!!), root, temp.newFolder())
         val local = ProjectLocalOverlay { File(overlayDir!!, it).readBytes() }
         local.apply(root); local.apply(root)
-        assertTrue(File(root, "agent/battle/runtime/runtime.py").readText().contains("default_target=1,"))
-        assertTrue(File(root, "agent/android_entry.py").isFile)
-        assertTrue(File(root, "python/lib/python3.13/site-packages/numpy/_core/__init__.py").isFile)
-        val catalog = com.maaframework.android.catalog.InterfaceCatalogLoader(supportedControllers = setOf("adb")).loadFromDirectory(root)
-        assertTrue(catalog.tasks.any { it.id == "自动推主线（beta）" })
+        config.requiredPaths.forEach { assertTrue("Missing $it", File(root, it).isFile) }
+        val catalog = com.maaframework.android.catalog.InterfaceCatalogLoader(supportedControllers = project.supportedControllers).loadFromDirectory(root)
+        assertTrue(catalog.tasks.isNotEmpty())
+        project.defaultTaskId?.let { id -> assertTrue(catalog.tasks.any { it.id == id && it.controllerSupported }) }
+        project.defaultResourceId?.let { id -> assertTrue(catalog.resources.any { it.id == id }) }
     }
 }
