@@ -31,6 +31,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.Switch
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -47,6 +48,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.maaframework.android.catalog.TaskOptionSupport
+import com.maaframework.android.host.canUpdateProjectResources
 import com.maaframework.android.host.MaaHostActions
 import com.maaframework.android.host.MaaHostLogFilter
 import com.maaframework.android.host.MaaHostOptionScopes
@@ -194,7 +196,7 @@ private fun MaaHostHomeScreen(
 ) {
     val context = LocalContext.current
     val metrics = context.resources.displayMetrics
-    val repositoryReady = state.resourceRepository.available
+    val repositoryReady = state.resourceRepository.available && !state.resourceRepositoryUpdating
     MaaHomePanel(
         overview = listOf(
             MaaHomeInfo("屏幕分辨率", "${metrics.widthPixels} × ${metrics.heightPixels}"),
@@ -228,9 +230,9 @@ private fun MaaHostHomeScreen(
         ),
         actions = buildList {
             add(MaaHomeAction("准备运行时", if (state.runtimeState.runtimePrepared) "已就绪" else "执行", state.rootConnected && repositoryReady && !state.busy, onClick = actions.prepareRuntime))
-            add(MaaHomeAction("打开游戏", "打开", state.rootConnected && !state.busy, onClick = actions.startWindowedGame))
+            add(MaaHomeAction("打开游戏", "打开", state.rootConnected && !state.busy && !state.resourceRepositoryUpdating, onClick = actions.startWindowedGame))
             if (config.showPresetRun && state.catalog.presets.isNotEmpty()) {
-                add(MaaHomeAction("运行所选预设", "运行", state.rootConnected && state.selectedPresetId != null && !state.busy, onClick = actions.startSelectedPreset))
+                add(MaaHomeAction("运行所选预设", "运行", state.rootConnected && state.selectedPresetId != null && !state.busy && !state.resourceRepositoryUpdating, onClick = actions.startSelectedPreset))
             }
             add(MaaHomeAction(if (state.rootConnected) "重新连接 Runtime" else "连接 Root / Runtime", "连接", !state.busy, onClick = actions.requestRootAndConnect))
         },
@@ -241,15 +243,15 @@ private fun MaaHostHomeScreen(
                 error = state.resourceRepository.lastError,
                 progress = state.resourceRepositoryProgress?.let { MaaHomeProgress(it.fraction, it.label) },
                 action = MaaHomeAction(
-                    title = "同步项目资源",
+                    title = "检查并更新项目资源",
                     actionLabel = if (state.resourceRepositoryUpdating) "同步中" else "同步",
-                    enabled = state.manifest.hasGitHubResourceRepository() && !state.resourceRepositoryUpdating,
+                    enabled = state.canUpdateProjectResources(),
                     onClick = actions.refreshResourceRepository,
                 ),
                 clearAction = MaaHomeAction(
                     title = "清除本地资源",
                     actionLabel = "清除",
-                    enabled = state.manifest.hasGitHubResourceRepository() && !state.resourceRepositoryUpdating,
+                    enabled = state.canUpdateProjectResources(),
                     onClick = actions.requestClearResourceRepositoryConfirmation,
                 ),
             ) {
@@ -366,7 +368,7 @@ private fun MaaHostTasksScreen(
             ) {
                 Button(
                     onClick = actions.startSelectedTask,
-                    enabled = state.rootConnected && !state.busy && tasks.any { it.controllerSupported } && errors.isEmpty(),
+                    enabled = state.rootConnected && !state.busy && !state.resourceRepositoryUpdating && tasks.any { it.controllerSupported } && errors.isEmpty(),
                 ) { Text("运行已勾选任务") }
                 OutlinedButton(
                     onClick = actions.stopRun,
@@ -433,13 +435,23 @@ private fun MaaHostSettingsScreen(
             )
         }
         MaaSettingsSection("资源与 Runtime") {
+            if (state.manifest.hasResourceUpdateSource()) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                    Column(Modifier.weight(1f)) {
+                        Text("自动更新上游资源", style = MaterialTheme.typography.bodyLarge)
+                        Text("应用打开时每 6 小时检查，任务结束后更新", style = MaterialTheme.typography.bodySmall)
+                    }
+                    Switch(checked = state.autoUpdateResources, onCheckedChange = actions.updateAutoUpdateResources)
+                }
+                MaaHomeDivider()
+            }
             MaaHomeInfoRow("资源状态", repositorySummary(state))
             state.servicePing.takeIf { it.isNotBlank() }?.let {
                 MaaHomeDivider()
                 MaaHomeInfoRow("服务响应", it)
             }
             MaaHomeDivider()
-            MaaHomeActionRow(MaaHomeAction("同步项目资源", "同步", state.manifest.hasGitHubResourceRepository() && !state.resourceRepositoryUpdating, onClick = actions.refreshResourceRepository))
+            MaaHomeActionRow(MaaHomeAction("同步项目资源", "同步", state.canUpdateProjectResources(), onClick = actions.refreshResourceRepository))
             MaaHomeDivider()
             MaaHomeActionRow(MaaHomeAction("导出 Runtime 诊断", "导出", state.rootConnected, onClick = actions.exportDiagnostics))
         }
@@ -536,7 +548,10 @@ private fun MaaHostTab.subtitle(state: MaaHostState, visibleTasks: List<TaskDesc
 
 private fun repositorySummary(state: MaaHostState): String = when {
     state.resourceRepositoryUpdating -> state.resourceRepositoryProgress?.label ?: "正在同步"
-    state.resourceRepository.source == "bundled" && state.resourceRepository.available -> "APK 内置资源（随应用更新）"
+    state.resourceRepository.source == "bundled" && state.resourceRepository.available ->
+        "内置版本 ${state.resourceRepository.mainRevision.orEmpty()}" + if (state.manifest.hasResourceUpdateSource()) " · 可从上游更新" else ""
+    state.resourceRepository.source == "github-release" && state.resourceRepository.available ->
+        "${state.resourceRepository.mainRevision.orEmpty()} · 本地覆盖已应用"
     state.resourceRepository.available -> "已就绪"
     !state.resourceRepository.lastError.isNullOrBlank() -> "同步失败"
     else -> "尚未下载"

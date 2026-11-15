@@ -35,6 +35,7 @@ dependencies {
     implementation(project(":framework"))
     api(project(":framework-host"))
 
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.10.0")
     implementation("androidx.core:core-ktx:1.17.0")
     implementation("androidx.activity:activity-compose:1.12.4")
     // 1.1.0 separates writable data from RELRO on 16 KB page-size devices.

@@ -14,6 +14,7 @@ import kotlinx.serialization.json.jsonObject
 
 @Serializable
 data class MaaHostSettings(
+    val autoUpdateResources: Boolean = true,
     val selectedResourceId: String? = null,
     val selectedTaskId: String? = null,
     val selectedPresetId: String? = null,
@@ -73,6 +74,12 @@ class MaaHostSettingsRepository(
             logLevel = MaaLogLevels.normalize(prefs.getString(KEY_LOG_LEVEL, MaaLogLevels.INFO)),
         )
     }
+
+    fun saveAutoUpdateResources(value: Boolean) = update { copy(autoUpdateResources = value) }
+
+    var nextResourceCheckAt: Long
+        get() = prefs.getLong("next_resource_check_at", 0L)
+        set(value) { prefs.edit().putLong("next_resource_check_at", value).apply() }
 
     fun saveSelectedResourceId(value: String?) = update { copy(selectedResourceId = value) }
 

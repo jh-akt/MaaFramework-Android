@@ -61,8 +61,15 @@ data class MaaProjectManifest(
     val bundledResourcePath: String? = null,
     @SerialName("github_resource_repository")
     val githubResourceRepository: GitHubResourceRepositoryConfig? = null,
+    @SerialName("github_release")
+    val githubRelease: GitHubReleaseConfig? = null,
+    @SerialName("local_overlay_path")
+    val localOverlayPath: String? = null,
 ) {
     init {
+        require(projectId.matches(Regex("[A-Za-z0-9_-]+"))) { "Invalid project_id" }
+        require(githubRelease == null || githubResourceRepository == null) { "Choose one update source" }
+        require(localOverlayPath == null || localOverlayPath.matches(Regex("[A-Za-z0-9_/-]+"))) { "Invalid overlay path" }
         require(virtualDisplayDpi > 0) { "virtual_display_dpi must be positive" }
         require(bundledResourcePath == null || (
             bundledResourcePath.isNotBlank() && !bundledResourcePath.startsWith("/") &&
@@ -81,6 +88,8 @@ data class MaaProjectManifest(
             ?: defaultResourceId?.let(resourcePackageNames::get)
             ?: resourcePackageNames.values.firstOrNull()
     }
+
+    fun hasResourceUpdateSource(): Boolean = githubRelease != null || hasGitHubResourceRepository()
 
     fun hasGitHubResourceRepository(): Boolean {
         val config = githubResourceRepository ?: return false

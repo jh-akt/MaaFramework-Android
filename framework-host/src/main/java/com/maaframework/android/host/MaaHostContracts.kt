@@ -3,6 +3,7 @@ package com.maaframework.android.host
 import android.view.Surface
 import com.maaframework.android.model.CatalogSnapshot
 import com.maaframework.android.model.RootEnvironmentReport
+import com.maaframework.android.model.RunSessionPhase
 import com.maaframework.android.model.RuntimeStateSnapshot
 import com.maaframework.android.project.MaaProjectManifest
 import com.maaframework.android.runtime.PersistentProjectRepositoryStatus
@@ -23,6 +24,7 @@ data class MaaHostState(
     val catalog: CatalogSnapshot = CatalogSnapshot(),
     val resourceRepository: PersistentProjectRepositoryStatus = PersistentProjectRepositoryStatus(),
     val resourceRepositoryUpdating: Boolean = false,
+    val autoUpdateResources: Boolean = true,
     val resourceRepositoryProgress: PersistentProjectRepositorySyncProgress? = null,
     val resourceRepositoryClearConfirmVisible: Boolean = false,
     val rootReport: RootEnvironmentReport = RootEnvironmentReport(),
@@ -58,6 +60,7 @@ data class MaaHostActions(
     val updateSharedSwitchOption: (String, String, String) -> Unit = { _, _, _ -> },
     val toggleSharedCheckboxOption: (String, String, String) -> Unit = { _, _, _ -> },
     val updateSharedInputValue: (String, String, String, String) -> Unit = { _, _, _, _ -> },
+    val updateAutoUpdateResources: (Boolean) -> Unit = {},
     val refreshResourceRepository: () -> Unit,
     val requestClearResourceRepositoryConfirmation: () -> Unit,
     val dismissClearResourceRepositoryConfirmation: () -> Unit,
@@ -86,3 +89,8 @@ data class MaaHostUiConfig(
     val showManualOverride: Boolean = true,
     val showPresetRun: Boolean = true,
 )
+
+fun MaaHostState.canUpdateProjectResources(): Boolean = manifest.hasResourceUpdateSource() &&
+    !busy && !resourceRepositoryUpdating && runtimeState.phase !in setOf(
+        RunSessionPhase.Preparing, RunSessionPhase.Running, RunSessionPhase.Stopping,
+    )

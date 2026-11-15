@@ -28,6 +28,10 @@ data class PersistentProjectRepositoryStatus(
     val updatedAt: Long = 0L,
     val rootPath: String? = null,
     val lastError: String? = null,
+    val assetSha256: String? = null,
+    val overlayRevision: String? = null,
+    val includesRuntime: Boolean = false,
+    val releaseConfigRevision: String? = null,
 )
 
 data class PersistentProjectRepositorySyncProgress(
@@ -42,7 +46,7 @@ object PersistentProjectRepositoryManager {
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
     fun currentRoot(context: Context, manifest: MaaProjectManifest): File {
-        manifest.requireGitHubResourceRepository()
+        require(manifest.hasResourceUpdateSource()) { "No project update source configured" }
         return File(sharedBaseDir(context, manifest.projectId), "current")
     }
 
@@ -50,7 +54,7 @@ object PersistentProjectRepositoryManager {
         context: Context,
         manifest: MaaProjectManifest,
     ): PersistentProjectRepositoryStatus {
-        if (manifest.githubResourceRepository != null) {
+        if (manifest.hasResourceUpdateSource()) {
             val root = currentRoot(context, manifest)
             val previous = File(root.parentFile, "previous")
             if (!root.exists() && previous.exists()) {
@@ -64,11 +68,21 @@ object PersistentProjectRepositoryManager {
     }
 
     private fun loadStatusUnlocked(context: Context, manifest: MaaProjectManifest): PersistentProjectRepositoryStatus {
+        manifest.githubRelease?.let { config ->
+            val root = currentRoot(context, manifest)
+            val metadata = readMetadata(root)
+            if (metadata?.source == "github-release" && metadata.owner == config.owner && metadata.repo == config.repo &&
+                metadata.overlayRevision == localOverlay(context, manifest)?.fingerprint() &&
+                metadata.releaseConfigRevision == config.fingerprint() && config.requiredPaths.all { File(root, it).isFile }) {
+                return metadata.copy(available = true, rootPath = root.absolutePath, lastError = null)
+            }
+        }
         manifest.bundledResourcePath?.let { path ->
             val available = runCatching { context.assets.open("$path/interface.json").close() }.isSuccess
             return PersistentProjectRepositoryStatus(
                 available = available,
                 source = "bundled",
+                mainRevision = manifest.githubRelease?.bundledVersion,
                 lastError = if (available) null else "APK 中缺少项目资源",
             )
         }
@@ -127,6 +141,12 @@ object PersistentProjectRepositoryManager {
         manifest: MaaProjectManifest,
     ): PersistentProjectRepositoryStatus {
         return withRepositoryLock(context, manifest) {
+            if (manifest.githubRelease != null) {
+                return@withRepositoryLock runCatching {
+                    deleteTreeNoFollow(sharedBaseDir(context, manifest.projectId))
+                    loadStatusUnlocked(context, manifest)
+                }.getOrElse { loadStatusUnlocked(context, manifest).copy(lastError = it.message) }
+            }
             val config = manifest.githubResourceRepository
                 ?: return@withRepositoryLock PersistentProjectRepositoryStatus(
                     available = false,
@@ -159,6 +179,23 @@ object PersistentProjectRepositoryManager {
         progress: ((PersistentProjectRepositorySyncProgress) -> Unit)? = null,
     ): PersistentProjectRepositoryStatus {
         return withRepositoryLock(context, manifest) {
+            manifest.githubRelease?.let { config ->
+                val base = sharedBaseDir(context, manifest.projectId).apply { mkdirs() }
+                RepositoryDirectoryTransaction().recover(File(base, "current"), File(base, "previous"))
+                val existing = loadStatusUnlocked(context, manifest)
+                return@withRepositoryLock runCatching {
+                    GitHubReleaseUpdater(config, base, localOverlay(context, manifest), validate = { root ->
+                        val catalog = com.maaframework.android.catalog.InterfaceCatalogLoader(
+                            context.assets, manifest.supportedControllers,
+                        ).loadFromDirectory(root)
+                        check(catalog.tasks.isNotEmpty() && catalog.resources.isNotEmpty()) { "Release catalog is empty" }
+                        check(RuntimeAgentResolver.resolve(root)?.isRunnable == true) { "Release agent is not runnable" }
+                    }, progress = { progress?.invoke(it) }).update(existing)
+                }.getOrElse { error ->
+                    logger?.invoke("Release update failed: ${error.message}")
+                    loadStatusUnlocked(context, manifest).copy(lastError = error.message ?: error.javaClass.simpleName)
+                }
+            }
             val config = manifest.githubResourceRepository
                 ?: return@withRepositoryLock PersistentProjectRepositoryStatus(
                     available = false,
@@ -192,6 +229,7 @@ object PersistentProjectRepositoryManager {
                     )
                 }
                 applyCopyMappings(stagingRoot, manifest, logger)
+                localOverlay(context, manifest)?.apply(stagingRoot)
                 check(isRepositoryReady(stagingRoot, config)) {
                     "GitHub resource repository is incomplete after sync"
                 }
@@ -224,6 +262,11 @@ object PersistentProjectRepositoryManager {
             }
         }
     }
+
+    private fun localOverlay(context: Context, manifest: MaaProjectManifest): ProjectLocalOverlay? =
+        manifest.localOverlayPath?.let { path ->
+            ProjectLocalOverlay { name -> context.assets.open("$path/$name").use { it.readBytes() } }
+        }
 
     private fun sharedBaseDir(context: Context, projectId: String): File {
         val externalRoot = resolveExternalFilesRoot(context.packageName) {

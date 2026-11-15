@@ -1,5 +1,6 @@
 package com.maaframework.android.host
 
+import com.maaframework.android.model.RunSessionPhase
 import android.app.Application
 import android.util.Log
 import android.view.Surface
@@ -53,6 +54,7 @@ open class MaaHostViewModel @JvmOverloads constructor(
 
     private var runtimeClient: MaaRuntimeClient? = null
     private var pollJob: Job? = null
+    private var updateCheckJob: Job? = null
     private var connectJob: Job? = null
     private var previewSurface: Surface? = null
     private var logCursor = 0L
@@ -72,11 +74,11 @@ open class MaaHostViewModel @JvmOverloads constructor(
                 initialMessage = "GitHub 资源缺失或格式异常：${error.message ?: error::class.java.simpleName}"
                 CatalogSnapshot()
             }
-        if (!resourceRepository.available && manifest.hasGitHubResourceRepository() && initialMessage == "GitHub 资源仓库未就绪") {
+        if (!resourceRepository.available && manifest.hasResourceUpdateSource() && initialMessage == "GitHub 资源仓库未就绪") {
             initialMessage = "首次启动需要同步 GitHub 资源，正在后台下载"
         }
         _uiState.value = buildInitialState(catalog, resourceRepository, initialMessage, appSettings)
-        if (!resourceRepository.available && manifest.hasGitHubResourceRepository()) {
+        if (!resourceRepository.available && manifest.hasResourceUpdateSource()) {
             viewModelScope.launch {
                 syncResourceRepository(force = false, silent = true)
             }
@@ -84,6 +86,36 @@ open class MaaHostViewModel @JvmOverloads constructor(
         if (_uiState.value.rootReport.available) {
             requestRootAndConnect(silent = true)
         }
+    }
+
+    /** Called by the shared Activity; checks are deferred while preparing/running/stopping. */
+    fun onHostStarted() {
+        if (updateCheckJob?.isActive == true || !manifest.hasResourceUpdateSource()) return
+        updateCheckJob = viewModelScope.launch {
+            delay(2_000)
+            while (true) {
+                if (_uiState.value.autoUpdateResources && System.currentTimeMillis() >= settingsRepository.nextResourceCheckAt && canUpdateResources()) {
+                    viewModelScope.launch { syncResourceRepository(force = true, silent = true) }
+                }
+                delay(60_000)
+            }
+        }
+    }
+
+    fun onHostStopped() { updateCheckJob?.cancel(); updateCheckJob = null }
+
+    fun updateAutoUpdateResources(enabled: Boolean) {
+        settingsRepository.saveAutoUpdateResources(enabled)
+        _uiState.update { it.copy(autoUpdateResources = enabled) }
+        if (enabled) settingsRepository.nextResourceCheckAt = 0L
+    }
+
+    private fun canUpdateResources(): Boolean = _uiState.value.canUpdateProjectResources()
+
+    private fun rejectDuringResourceUpdate(): Boolean {
+        if (!_uiState.value.resourceRepositoryUpdating) return false
+        _uiState.update { it.copy(lastMessage = "资源正在更新，请完成后再运行") }
+        return true
     }
 
     fun selectResource(resourceId: String) {
@@ -244,11 +276,13 @@ open class MaaHostViewModel @JvmOverloads constructor(
     }
 
     fun prepareRuntime() {
+        if (rejectDuringResourceUpdate()) return
         runServiceAction(
             actionName = "Preparing runtime",
             action = { it.prepareRuntime() },
             onSuccess = { prepared ->
                 _uiState.update { current -> current.copy(
+                    runtimeState = if (prepared) current.runtimeState.copy(phase = RunSessionPhase.Preparing) else current.runtimeState,
                     lastMessage = if (prepared) "Runtime preparation queued" else "Runtime prepare request failed",
                 ) }
             },
@@ -256,6 +290,7 @@ open class MaaHostViewModel @JvmOverloads constructor(
     }
 
     fun startWindowedGame() {
+        if (rejectDuringResourceUpdate()) return
         val resourceId = _uiState.value.selectedResourceId
         runServiceAction(
             actionName = "Opening game",
@@ -446,11 +481,13 @@ open class MaaHostViewModel @JvmOverloads constructor(
     }
 
     private fun startRun(request: RunRequest, label: String) {
+        if (rejectDuringResourceUpdate()) return
         runServiceAction(
             actionName = label,
             action = { client -> client.startRun(request) },
             onSuccess = { started ->
                 _uiState.update { current -> current.copy(
+                    runtimeState = if (started) current.runtimeState.copy(phase = RunSessionPhase.Running) else current.runtimeState,
                     lastMessage = if (started) label else "Run request was rejected",
                 ) }
             },
@@ -530,7 +567,7 @@ open class MaaHostViewModel @JvmOverloads constructor(
     }
 
     private suspend fun syncResourceRepository(force: Boolean, silent: Boolean) {
-        if (!manifest.hasGitHubResourceRepository() || _uiState.value.resourceRepositoryUpdating) {
+        if (!manifest.hasResourceUpdateSource() || !canUpdateResources()) {
             return
         }
         _uiState.update { current -> current.copy(
@@ -541,9 +578,18 @@ open class MaaHostViewModel @JvmOverloads constructor(
             ),
             lastMessage = if (silent) current.lastMessage else "正在同步 GitHub 资源",
         ) }
+        var deferred = false
         val application = getApplication<Application>()
         val status = runCatching {
             withContext(Dispatchers.IO) {
+                // Recheck the worker after reserving the update slot: polling may lag a reconnect.
+                runtimeClient?.getState()?.let { snapshot ->
+                    if (snapshot.phase in setOf(RunSessionPhase.Preparing, RunSessionPhase.Running, RunSessionPhase.Stopping)) {
+                        deferred = true
+                        _uiState.update { it.copy(runtimeState = snapshot) }
+                        return@withContext _uiState.value.resourceRepository
+                    }
+                }
                 if (force) {
                     PersistentProjectRepositoryManager.updateFromGithub(
                         context = application,
@@ -565,9 +611,16 @@ open class MaaHostViewModel @JvmOverloads constructor(
             )
         }
 
+        if (deferred) {
+            _uiState.update { it.copy(resourceRepositoryUpdating = false, resourceRepositoryProgress = null, lastMessage = "任务结束后再更新资源") }
+            return
+        }
+        settingsRepository.nextResourceCheckAt = System.currentTimeMillis() +
+            if (status.lastError == null) 6 * 60 * 60 * 1000L else 30 * 60 * 1000L
         refreshCatalogSnapshot(status)
         val nextMessage = when {
-            status.available && force -> "GitHub 资源已更新"
+            status.lastError != null -> "更新失败，保留原资源：${status.lastError}"
+            status.available && force -> "项目资源已是最新版本${status.mainRevision?.let { "（$it）" }.orEmpty()}"
             status.available -> "GitHub 资源仓库已就绪"
             else -> "GitHub 资源同步失败：${status.lastError ?: "未知错误"}"
         }
@@ -584,7 +637,7 @@ open class MaaHostViewModel @JvmOverloads constructor(
     }
 
     private suspend fun clearPersistentResourceRepository() {
-        if (!manifest.hasGitHubResourceRepository() || _uiState.value.resourceRepositoryUpdating) {
+        if (!manifest.hasResourceUpdateSource() || !canUpdateResources()) {
             return
         }
         _uiState.update { current -> current.copy(
@@ -622,8 +675,10 @@ open class MaaHostViewModel @JvmOverloads constructor(
 
     private fun loadCatalogSnapshot(resourceRepository: PersistentProjectRepositoryStatus): CatalogSnapshot {
         val application = getApplication<Application>()
-        return if (resourceRepository.available && manifest.hasGitHubResourceRepository()) {
-            catalogLoader.loadFromDirectory(PersistentProjectRepositoryManager.currentRoot(application, manifest))
+        return if (resourceRepository.available && resourceRepository.source != "bundled" && manifest.hasResourceUpdateSource()) {
+            PersistentProjectRepositoryManager.withSnapshot(application, manifest, {}) { root, _ ->
+                catalogLoader.loadFromDirectory(root)
+            }
         } else if (manifest.bundledResourcePath != null) {
             catalogLoader.load()
         } else {
@@ -717,6 +772,7 @@ open class MaaHostViewModel @JvmOverloads constructor(
             selectedPresetId = selectedPresetId,
             overrideJson = normalizeOverrideJson(settings.overrideJson),
             logLevel = settings.logLevel,
+            autoUpdateResources = settings.autoUpdateResources,
             lastMessage = if (initialMessage.isNotBlank()) {
                 initialMessage
             } else if (catalog.tasks.isEmpty()) {
@@ -900,6 +956,7 @@ open class MaaHostViewModel @JvmOverloads constructor(
             taskInputValuesByTask = mergeTaskInputValues(state.catalog.tasks, settings.taskInputValuesByTask),
             overrideJson = normalizeOverrideJson(settings.overrideJson),
             logLevel = settings.logLevel,
+            autoUpdateResources = settings.autoUpdateResources,
         ) }
     }
 
@@ -909,6 +966,7 @@ open class MaaHostViewModel @JvmOverloads constructor(
 
     private fun settingsFromState(state: MaaHostState): MaaHostSettings {
         return MaaHostSettings(
+            autoUpdateResources = state.autoUpdateResources,
             selectedResourceId = state.selectedResourceId,
             selectedTaskId = state.selectedTaskId,
             selectedPresetId = state.selectedPresetId,
@@ -955,6 +1013,7 @@ open class MaaHostViewModel @JvmOverloads constructor(
     }
 
     override fun onCleared() {
+        onHostStopped()
         pollJob?.cancel()
         displayPowerRecovery.close()
         runCatching { runtimeClient?.setMonitorSurface(null) }
@@ -1002,6 +1061,7 @@ fun MaaHostViewModel.hostActions() = MaaHostActions(
     updateTaskSwitchOption = ::updateTaskSwitchOption,
     toggleTaskCheckboxOption = ::toggleTaskCheckboxOption,
     updateTaskInputValue = ::updateTaskInputValue,
+    updateAutoUpdateResources = ::updateAutoUpdateResources,
     refreshResourceRepository = ::refreshResourceRepository,
     requestClearResourceRepositoryConfirmation = ::requestClearResourceRepositoryConfirmation,
     dismissClearResourceRepositoryConfirmation = ::dismissClearResourceRepositoryConfirmation,

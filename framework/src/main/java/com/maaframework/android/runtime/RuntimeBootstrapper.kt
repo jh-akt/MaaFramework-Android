@@ -36,6 +36,9 @@ object RuntimeBootstrapper {
         "requirements.txt",
         "python",
         "MaaAgentBinary",
+        "maafw",
+        "agent-core.json",
+        "licenses",
     )
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
 
@@ -52,7 +55,7 @@ object RuntimeBootstrapper {
         val apk = File(context.applicationInfo.sourceDir)
         val apkIdentity = "payload-v2:${apk.absolutePath}:${apk.length()}:${apk.lastModified()}"
         val store = RuntimePayloadStore(runtimeRoot)
-        fun preparePayload(repo: File?, revision: String): File = store.prepare(
+        fun preparePayload(repo: File?, revision: String, includesRuntime: Boolean = false): File = store.prepare(
             identity = "$apkIdentity:$revision",
             checkCancelled = checkCancelled,
             build = { staging ->
@@ -65,7 +68,7 @@ object RuntimeBootstrapper {
                 } else {
                     copyAssetEntry(assets, requireNotNull(manifest.bundledResourcePath), staging, logger, checkCancelled)
                 }
-                if (assetEntryExists(assets, "bundled_runtime")) {
+                if (!includesRuntime && assetEntryExists(assets, "bundled_runtime")) {
                     copyAssetEntry(assets, "bundled_runtime", staging, logger, checkCancelled)
                 }
                 checkCancelled()
@@ -79,12 +82,15 @@ object RuntimeBootstrapper {
                     RuntimeAgentResolver.resolve(root)?.isRunnable == true
             },
         )
-        val preparedRoot = if (manifest.bundledResourcePath != null) {
+        val preparedRoot = if (!manifest.hasResourceUpdateSource() && manifest.bundledResourcePath != null) {
             preparePayload(null, "bundled:${manifest.projectId}")
         } else {
             // Network sync belongs to the host. The worker only waits for a cancellable snapshot lease.
             PersistentProjectRepositoryManager.withSnapshot(context, manifest, checkCancelled) { repo, status ->
-                preparePayload(repo, "${status.mainRevision}:${status.updatedAt}")
+                preparePayload(
+                    repo.takeUnless { status.source == "bundled" },
+                    "${status.mainRevision}:${status.updatedAt}:${status.overlayRevision}", status.includesRuntime,
+                )
             }
         }
         checkCancelled()
