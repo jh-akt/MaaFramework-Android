@@ -8,7 +8,7 @@ import subprocess
 PATTERNS = {
     "developer home directory": re.compile(r"/(?:Users|home)/[\w.-]+/"),
     "Windows user directory": re.compile(r"[a-z]:[\\/]Users[\\/][^\s\\/]+[\\/]", re.I),
-    "fixed Homebrew installation": re.compile(r"/opt/homebrew/"),
+    "fixed Homebrew installation": re.compile(r"/opt/(?:homebrew)/"),
     "local workspace mount": re.compile(r"/(?:data|mnt|Volumes)/agent-os(?:/|\b)"),
     "absolute placeholder": re.compile(r"/(?:absolute/)?path/to(?:/|\b)"),
 }
