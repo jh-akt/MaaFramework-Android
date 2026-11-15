@@ -7,6 +7,8 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
+from test_verify_android_elf import elf
+
 
 SCRIPT = Path(__file__).with_name("package_android_runtime.py")
 SPEC = importlib.util.spec_from_file_location("package_android_runtime", SCRIPT)
@@ -22,7 +24,7 @@ class PackageAndroidRuntimeTest(unittest.TestCase):
             runtime = temp / "runtime"
             (runtime / "maafw").mkdir(parents=True)
             (runtime / "agent").mkdir()
-            (runtime / "maafw" / "libMaaFramework.so").write_bytes(b"so")
+            (runtime / "maafw" / "libMaaFramework.so").write_bytes(elf())
             (runtime / "agent" / "go-service").write_bytes(b"agent")
             for name in ("runtime-manifest.json", "runtime-package.json"):
                 (runtime / name).write_text(json.dumps({"output_dir": temp_name, "agents": [{"path": temp_name}]}))
@@ -40,7 +42,7 @@ class PackageAndroidRuntimeTest(unittest.TestCase):
                 self.assertEqual(1, archive.namelist().count("runtime-package.json"))
                 self.assertNotIn("runtime-manifest.json", archive.namelist())
                 self.assertEqual(b"agent", archive.read("agent/go-service"))
-                self.assertEqual(b"so", archive.read("maafw/libMaaFramework.so"))
+                self.assertEqual(elf(), archive.read("maafw/libMaaFramework.so"))
             self.assertEqual("runtime", metadata["runtime_root"])
             self.assertNotIn("runtime_dir", metadata)
             self.assertNotIn(temp_name, json.dumps(metadata))

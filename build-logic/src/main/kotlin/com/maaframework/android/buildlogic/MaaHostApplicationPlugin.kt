@@ -30,6 +30,7 @@ abstract class MaaRuntimeExtension @Inject constructor(objects: ObjectFactory) {
         .convention(true)
     val verifyChecksum: Property<Boolean> = objects.property(Boolean::class.java)
         .convention(true)
+    val sha256: Property<String> = objects.property(String::class.java).convention("")
 }
 
 class MaaHostApplicationPlugin : Plugin<Project> {
@@ -64,6 +65,7 @@ private fun Project.configureRuntimeBundling(extension: MaaRuntimeExtension) {
         inputs.property("runtimeReleaseAsset", extension.releaseAsset)
         inputs.property("requireMaaFramework", extension.requireMaaFramework)
         inputs.property("verifyChecksum", extension.verifyChecksum)
+        inputs.property("runtimeSha256", extension.sha256)
         outputs.dir(resolvedRuntimeDir)
         outputs.upToDateWhen { false }
 
@@ -94,7 +96,7 @@ private fun Project.configureRuntimeBundling(extension: MaaRuntimeExtension) {
                     if (extension.verifyChecksum.get()) {
                         verifyArchiveChecksum(
                             archive = archive,
-                            expected = property("maafwRuntimeSha256"),
+                            expected = property("maafwRuntimeSha256", extension.sha256.get()),
                             checksumUrl = property("maafwRuntimeChecksumUrl", "$runtimeUrl.sha256")!!,
                         )
                     }

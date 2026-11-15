@@ -1,0 +1,40 @@
+name: Publish Python Android Runtime
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: New immutable runtime release tag
+        default: android-runtime-5.16.1-r1
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-python-runtime
+  cancel-in-progress: false
+
+jobs:
+  runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - name: Install pinned NDK
+        run: sdkmanager "ndk;27.0.12077973"
+      - name: Build and verify pinned runtime
+        run: |
+          python3 tools/build_16k_runtime.py --kind python --output dist/runtime
+          python3 tools/package_android_runtime.py --runtime-dir dist/runtime --output dist/maaframework-python-android-arm64-v8a-5.16.1.zip
+      - name: Publish immutable archive and checksum
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          gh release create "$RELEASE_TAG" dist/*.zip dist/*.sha256 --target "$GITHUB_SHA" \
+            --title "Python Android Runtime $RELEASE_TAG" --latest=false \
+            --notes "MaaFramework 5.16.1 and matching Python binding. Every bundled ELF passes 16 KiB LOAD and RELRO checks. See docs/ANDROID_RUNTIME_16K.md for scope and build instructions."

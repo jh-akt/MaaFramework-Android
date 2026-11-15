@@ -39,7 +39,9 @@ def detect_android_clang() -> tuple[str, str] | tuple[None, None]:
 
     android_api = os.environ.get("MAAFW_ANDROID_API", "30")
     host_tag = ndk_host_tag()
-    versions = sorted([p for p in ndk_root.iterdir() if p.is_dir()], reverse=True)
+    pinned_version = os.environ.get("MAAFW_NDK_VERSION")
+    versions = ([ndk_root / pinned_version] if pinned_version else
+                sorted([p for p in ndk_root.iterdir() if p.is_dir()], reverse=True))
     for version_dir in versions:
         toolchain = version_dir / "toolchains" / "llvm" / "prebuilt" / host_tag / "bin"
         for suffix in ("", ".cmd", ".exe"):
@@ -78,7 +80,9 @@ def stage_go_binary(go_exe: str, source_dir: Path, output_path: Path) -> Path:
         "CXX": cxx,
     }
     run(
-        [go_exe, "build", "-trimpath", "-o", str(output_path), "."],
+        [go_exe, "build", "-trimpath", "-buildmode=pie",
+         "-ldflags=-linkmode=external -extldflags=-Wl,-z,max-page-size=16384,-z,common-page-size=16384",
+         "-o", str(output_path), "."],
         cwd=source_dir,
         env=env,
     )
@@ -129,6 +133,7 @@ def build_python_launcher(python_runtime_dir: Path) -> Path:
             str(python_runtime_dir / "lib"),
             f"-l:{python_lib.name}",
             "-Wl,-rpath,$ORIGIN/../lib",
+            "-Wl,-z,max-page-size=16384,-z,common-page-size=16384",
             "-o",
             str(output_path),
         ]
@@ -253,11 +258,11 @@ def patch_maafw_python_for_android(python_runtime_dir: Path) -> None:
     if not library_file.exists():
         return
     text = library_file.read_text(encoding="utf-8")
-    needle = "        platform_type = platform.system().lower()\n\n"
+    needle = "        platform_type = platform.system().lower()\n"
     replacement = (
         "        platform_type = platform.system().lower()\n"
         "        if platform_type == \"android\":\n"
-        "            platform_type = LINUX\n\n"
+        "            platform_type = LINUX\n"
     )
     if replacement in text:
         return

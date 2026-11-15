@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "maafw": {
+    "version": "5.16.1",
+    "url": "https://github.com/MaaXYZ/MaaFramework/releases/download/v5.16.1/MAA-android-aarch64-v5.16.1.zip",
+    "size": 55969896,
+    "sha256": "71e6f1a81e432d64cd62e780977c66d8307e230a0b6faebee252b0195f6a841c"
+  },
+  "python_base": {
+    "version": "3.14.4",
+    "url": "https://github.com/jh-akt/MaaFramework-Android/releases/download/android-runtime-v1/maaframework-android-runtime-arm64-v8a.zip",
+    "size": 82533641,
+    "sha256": "1979c8ebfea78f537237bbf416602beefe0198a6497d738c375b636a08baa31b"
+  },
+  "python_binding": {
+    "version": "5.16.1",
+    "url": "https://files.pythonhosted.org/packages/2b/17/f5d29978c968c8119ec20708eb0f79e0f848238d42fa575729052744bb0a/maafw-5.16.1-py3-none-manylinux2014_aarch64.whl",
+    "size": 21430607,
+    "sha256": "8c0683470a977b093eaf07d6e146326befaf8684a7d5f6502d8d36b402a03f50"
+  },
+  "android_api": 30,
+  "ndk": "27.0.12077973",
+  "go": "1.26.10"
+}

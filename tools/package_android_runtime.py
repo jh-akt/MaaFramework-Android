@@ -7,6 +7,8 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from verify_android_elf import verify_runtime
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_RUNTIME_DIR = PROJECT_ROOT / "runtime"
@@ -68,6 +70,8 @@ def main() -> int:
         raise FileNotFoundError(f"runtime dir not found: {runtime_dir}")
     if not args.skip_validation:
         ensure_required_runtime(runtime_dir)
+        if not verify_runtime(runtime_dir):
+            raise ValueError("Runtime contains no ELF binaries")
 
     runtime_files = iter_runtime_files(runtime_dir)
     if not runtime_files:

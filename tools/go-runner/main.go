@@ -198,6 +198,22 @@ func (c *shellController) Inactive() bool {
 	return true
 }
 
+func (c *shellController) RelativeMove(dx, dy int32) bool {
+	// Android's touchscreen input command has no relative mouse movement.
+	return false
+}
+
+func (c *shellController) Shell(command string, timeout int64) (string, bool) {
+	ctx := context.Background()
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeout)*time.Millisecond)
+		defer cancel()
+	}
+	output, err := exec.CommandContext(ctx, "/system/bin/sh", "-c", command).CombinedOutput()
+	return string(output), err == nil
+}
+
 func (c *shellController) GetInfo() (string, bool) {
 	return `{"type":"adb","name":"ADB"}`, true
 }
@@ -423,7 +439,7 @@ func piEnv(runtimeRoot, resourceName, controllerName, controllerType, clientName
 		"PI_CLIENT_NAME=" + clientName,
 		"PI_CLIENT_VERSION=" + clientVersion,
 		"PI_CLIENT_LANGUAGE=" + clientLanguage,
-		"PI_CLIENT_MAAFW_VERSION=v5.10.2",
+		"PI_CLIENT_MAAFW_VERSION=" + maa.Version(),
 		"PI_VERSION=" + projectVersion,
 		"PI_CONTROLLER=" + string(controllerData),
 		"PI_RESOURCE=" + string(resourceData),

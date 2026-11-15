@@ -1,5 +1,6 @@
 import importlib.util
 import unittest
+import tempfile
 from pathlib import Path
 
 
@@ -19,6 +20,16 @@ class PrepareAndroidRuntimeTest(unittest.TestCase):
     def test_unknown_host_is_rejected(self) -> None:
         with self.assertRaises(RuntimeError):
             MODULE.ndk_host_tag("plan9")
+
+    def test_platform_patch_handles_adjacent_api_initialization(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = root / "lib/python3.14/site-packages/maa/library.py"
+            path.parent.mkdir(parents=True)
+            path.write_text("        platform_type = platform.system().lower()\n        cls._lib_type = ctypes.CDLL\n")
+            MODULE.patch_maafw_python_for_android(root)
+            MODULE.patch_maafw_python_for_android(root)
+            self.assertEqual(1, path.read_text().count('if platform_type == "android":'))
 
 
 if __name__ == "__main__":

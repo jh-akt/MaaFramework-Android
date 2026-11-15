@@ -228,6 +228,7 @@ public final class MaaFrameworkBridge {
             List<String> preloadOrder = new ArrayList<>();
             preloadOrder.add("libc++_shared.so");
             preloadOrder.add("libonnxruntime.so");
+            preloadOrder.add("libncnn.so");
             preloadOrder.add("libfastdeploy_ppocr.so");
             preloadOrder.add("libopencv_world4.so");
             preloadOrder.add("libMaaUtils.so");
